@@ -14,8 +14,7 @@ import * as XLSX from "xlsx";
    - Auditoria CMV: qde, venda, custo, custo unit., preço médio, CMV%
    - Uploads: categorias (AUX CATEGORIA), combos (AUX COMBOS),
      estoque (formato colunar OU blocos horizontais, com CD)
-   - Persistência: localStorage do navegador (dados voltam ao reabrir NESTE
-     computador/navegador — não é compartilhado entre pessoas da equipe)
+   - Persistência: window.storage (dados voltam ao reabrir)
    ============================================================ */
 
 const Z_TABLE = { 0.8: 0.84, 0.9: 1.28, 0.95: 1.65, 0.99: 2.33 };
@@ -64,7 +63,32 @@ function parseVendas(wb) {
       const r = (data[i] || []).map((c) => String(c || "").toLowerCase().trim());
       if (r.some((c) => c.includes("data_emissao") || c === "data")) { hi = i; break; }
     }
-    if (hi < 0) continue;
+    if (hi < 0) {
+      // Tenta formato nativo do sistema (izzyway): col0=vazio, col1=Cod., col2=Produto, col3=Qde.
+      // Múltiplas datas intercaladas: "Data Emissão: DD/MM/YYYY" em col0
+      const h0 = (data[0] || []).map((c) => String(c || "").toLowerCase().trim());
+      if (h0[1] === "cod." && h0[2] === "produto" && (h0[3] || "").startsWith("qde")) {
+        let currentDate = null;
+        for (let i = 1; i < data.length; i++) {
+          const r = data[i] || [];
+          const c0 = String(r[0] ?? "").trim();
+          const dm = c0.match(/(\d{2}\/\d{2}\/\d{4})/);
+          if (dm) { currentDate = parseDateBR(dm[1]); continue; }
+          if (!currentDate || !c0 || !/^\d+$/.test(c0)) continue;
+          const cod = parseInt(String(r[1] || ""), 10);
+          const qde = parseFloat(r[3]);
+          if (!cod || isNaN(cod) || !qde || isNaN(qde) || qde <= 0) continue;
+          rows.push({ dt: currentDate, cod, produto: String(r[2] || "").trim(),
+            qde, vendido: parseFloat(r[5]) || 0, custo: parseFloat(r[6]) || 0 });
+        }
+        if (rows.length) {
+          const nd = new Set(rows.map((r) => r.dt.getTime())).size;
+          warnings.push(`Formato exportação sistema: ${rows.length} registros em ${nd} datas.`);
+          break;
+        }
+      }
+      continue;
+    }
     const header = data[hi].map((c) => String(c || "").toLowerCase().trim());
     const iData = header.findIndex((c) => c.includes("data"));
     const iCod = header.findIndex((c) => c === "cod" || c === "cod." || c === "código" || c === "codigo");
@@ -172,6 +196,45 @@ function parseEstoquePorLoja(wb) {
   return { map, formato };
 }
 
+// Formato simples de estoque: um arquivo por loja (Cod | Produto | Qty)
+// Aceita também o formato izzyway (col0 vazio, col1=Cod., col3=Qde.)
+function parseEstoqueSimples(wb) {
+  const map = {};
+  for (const name of wb.SheetNames) {
+    const data = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
+    let hi = -1, iCod = -1, iQty = -1;
+    for (let i = 0; i < Math.min(data.length, 10); i++) {
+      const r = (data[i] || []).map((c) => String(c || "").toLowerCase().trim());
+      const ic = r.findIndex((c) => c === "cod" || c === "cod." || c === "código" || c === "codigo");
+      if (ic < 0) continue;
+      for (let k = 0; k < r.length; k++) {
+        if (k === ic) continue;
+        if (r[k].startsWith("saldo") || r[k].startsWith("qde") || r[k].startsWith("qtd") || r[k] === "estoque" || r[k] === "quantidade") {
+          hi = i; iCod = ic; iQty = k; break;
+        }
+      }
+      if (hi >= 0) break;
+    }
+    // Fallback: formato izzyway (col0=vazio, col1=Cod., col3=Qde.)
+    if (hi < 0) {
+      const h0 = (data[0] || []).map((c) => String(c || "").toLowerCase().trim());
+      if (h0[1] === "cod." && h0[2] === "produto" && (h0[3] || "").startsWith("qde")) {
+        hi = 0; iCod = 1; iQty = 3;
+      }
+    }
+    if (hi < 0 || iQty < 0) continue;
+    for (let i = hi + 1; i < data.length; i++) {
+      const r = data[i] || [];
+      const cod = parseInt(String(r[iCod] || ""), 10);
+      const qty = parseFloat(r[iQty]);
+      if (!cod || isNaN(cod) || isNaN(qty)) continue;
+      map[cod] = (map[cod] || 0) + qty;
+    }
+    if (Object.keys(map).length) break;
+  }
+  return map;
+}
+
 function parseCategorias(wb) {
   const map = {};
   for (const name of wb.SheetNames) {
@@ -227,6 +290,7 @@ function computeAll(sales, params, estoqueLoja, categorias, combos) {
   const dowRef = (ref.getDay() + 6) % 7;
   const lastSunday = dowRef === 6 ? ref : addDays(ref, -(dowRef + 1));
   const lastWeekStart = addDays(lastSunday, -6);
+  lastWeekStart.setHours(0, 0, 0, 0); // normaliza para meia-noite — timestamps devem bater com weekStart()
   const weekStarts = []; for (let i = 7; i >= 0; i--) weekStarts.push(addDays(lastWeekStart, -7*i));
   const partialWeekStart = addDays(lastWeekStart, 7);
   const mix4Start = addDays(lastWeekStart, -21), mix4End = addDays(lastWeekStart, 6);
@@ -327,81 +391,61 @@ function computeAll(sales, params, estoqueLoja, categorias, combos) {
   return { rows: withVol, weekStarts, partialWeekStart, lastWeekStart, Z, nCombos: combos.length };
 }
 
-/* ---------------- persistência (localStorage do navegador) ---------------- */
-// Site publicado: cada pessoa que abrir tem seu PRÓPRIO localStorage (não é
-// compartilhado entre computadores). Se a equipe precisar ver os mesmos dados,
-// isso exigiria um banco de dados — avise se for o caso.
-const LS_PREFIX = "pcp_tortele_";
+/* ---------------- persistência (window.storage) ---------------- */
 const CHUNK = 20000;
-
-function lsSet(key, value) {
-  try { localStorage.setItem(LS_PREFIX + key, value); return true; }
-  catch (e) { console.error("localStorage set", key, e); return false; }
-}
-function lsGet(key) {
-  const v = localStorage.getItem(LS_PREFIX + key);
-  return v == null ? null : v;
-}
-function lsRemove(key) { localStorage.removeItem(LS_PREFIX + key); }
-
-async function saveState({ files, estoqueLoja, estoqueInfo, categorias, combos, params }) {
+async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params }) {
   try {
     const flat = [];
-    const nameMap = {};
     const fmeta = files.map((f) => ({ name: f.name, loja: f.loja, n: f.rows.length }));
     for (const f of files) if (f.loja) {
       const li = LOJAS.indexOf(f.loja);
-      for (const r of f.rows) {
-        flat.push([Math.round(r.dt.getTime() / 86400000), r.cod, r.qde, li, r.vendido || 0, r.custo || 0]);
-        if (r.produto && !nameMap[r.cod]) nameMap[r.cod] = r.produto;
-      }
+      for (const r of f.rows) flat.push([Math.round(r.dt.getTime()/86400000), r.cod, r.qde, li, r.vendido||0, r.custo||0]);
     }
     const nChunks = Math.ceil(flat.length / CHUNK);
     for (let i = 0; i < nChunks; i++) {
-      const ok = lsSet(`sales:${i}`, JSON.stringify(flat.slice(i * CHUNK, (i + 1) * CHUNK)));
-      if (!ok) return false; // provavelmente estourou a cota do navegador
+      await window.storage.set(`sales:${i}`, JSON.stringify(flat.slice(i*CHUNK,(i+1)*CHUNK)));
     }
-    lsSet("meta", JSON.stringify({ nChunks, fmeta, savedAt: Date.now() }));
-    lsSet("aux", JSON.stringify({ estoqueLoja, estoqueInfo, categorias, combos, params, nameMap }));
+    await window.storage.set("meta", JSON.stringify({ nChunks, fmeta, savedAt: Date.now() }));
+    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params }));
     return true;
   } catch (e) { console.error("save", e); return false; }
 }
-
 async function loadState() {
   try {
-    const metaR = lsGet("meta");
+    const metaR = await window.storage.get("meta");
     if (!metaR) return null;
-    const meta = JSON.parse(metaR);
+    const meta = JSON.parse(metaR.value);
     const flat = [];
     for (let i = 0; i < meta.nChunks; i++) {
-      const r = lsGet(`sales:${i}`);
-      if (r) flat.push(...JSON.parse(r));
+      const r = await window.storage.get(`sales:${i}`);
+      if (r) flat.push(...JSON.parse(r.value));
     }
-    const auxR = lsGet("aux");
-    const aux = auxR ? JSON.parse(auxR) : {};
-    const nameMap = aux.nameMap || {};
+    const auxR = await window.storage.get("aux");
+    const aux = auxR ? JSON.parse(auxR.value) : {};
     const byLoja = {};
     for (const [d, cod, qde, li, vendido, custo] of flat) {
       const loja = LOJAS[li];
-      (byLoja[loja] ||= []).push({ dt: new Date(d * 86400000), cod, produto: nameMap[cod] || "", qde, vendido, custo, loja });
+      (byLoja[loja] ||= []).push({ dt: new Date(d*86400000), cod, produto: "", qde, vendido, custo, loja });
     }
+    const files = meta.fmeta.filter((f)=>f.loja).map((f)=>({ name: f.name, loja: f.loja, rows: [], warnings: [], fromCache: true }));
+    // reconstruir rows por loja na ordem dos files (aproximação: agrupar por loja)
+    const grouped = {};
+    for (const l of LOJAS) grouped[l] = byLoja[l] || [];
     const outFiles = [];
-    for (const l of LOJAS) if ((byLoja[l] || []).length) outFiles.push({ name: `(sessão anterior) ${l}`, loja: l, rows: byLoja[l], warnings: [], fromCache: true });
-    delete aux.nameMap;
+    for (const l of LOJAS) if (grouped[l].length) outFiles.push({ name: `(sessão anterior) ${l}`, loja: l, rows: grouped[l], warnings: [], fromCache: true });
     return { files: outFiles, ...aux, savedAt: meta.savedAt };
   } catch (e) { console.error("load", e); return null; }
 }
-
 async function clearState() {
-  const metaR = lsGet("meta");
-  if (metaR) {
-    try {
-      const meta = JSON.parse(metaR);
-      for (let i = 0; i < meta.nChunks; i++) lsRemove(`sales:${i}`);
-    } catch (e) {}
-  }
-  lsRemove("meta");
-  lsRemove("aux");
+  try {
+    const metaR = await window.storage.get("meta");
+    if (metaR) {
+      const meta = JSON.parse(metaR.value);
+      for (let i = 0; i < meta.nChunks; i++) await window.storage.delete(`sales:${i}`).catch(()=>{});
+    }
+    await window.storage.delete("meta").catch(()=>{});
+    await window.storage.delete("aux").catch(()=>{});
+  } catch (e) {}
 }
 
 /* ---------------- export ---------------- */
@@ -448,6 +492,7 @@ export default function PCPTorteleWeb() {
   const [files, setFiles] = useState([]);
   const [estoqueLoja, setEstoqueLoja] = useState({});
   const [estoqueInfo, setEstoqueInfo] = useState(null);
+  const [estoqueArqs, setEstoqueArqs] = useState([]); // [{name, loja, data:{cod:qty}}]
   const [categorias, setCategorias] = useState({});
   const [catInfo, setCatInfo] = useState(null);
   const [combos, setCombos] = useState([]);
@@ -456,6 +501,8 @@ export default function PCPTorteleWeb() {
   const [nivelServico, setNivelServico] = useState(0.9);
   const [janela, setJanela] = useState(4);
   const [dataRef, setDataRef] = useState(() => new Date().toISOString().slice(0, 10));
+  const refEstArq = useRef(null);
+
   const [busca, setBusca] = useState("");
   const [filtroABC, setFiltroABC] = useState("");
   const [filtroCat, setFiltroCat] = useState("");
@@ -476,6 +523,7 @@ export default function PCPTorteleWeb() {
         setFiles(st.files);
         if (st.estoqueLoja) setEstoqueLoja(st.estoqueLoja);
         if (st.estoqueInfo) setEstoqueInfo(st.estoqueInfo);
+        if (st.estoqueArqs) setEstoqueArqs(st.estoqueArqs);
         if (st.categorias) setCategorias(st.categorias);
         if (st.combos) setCombos(st.combos);
         if (st.params) {
@@ -524,6 +572,20 @@ export default function PCPTorteleWeb() {
     } catch (e) { setErro(`Estoque: ${e.message}`); }
   }, []);
 
+  const handleEstoqueArq = useCallback(async (fl) => {
+    setErro(null);
+    for (const f of Array.from(fl)) {
+      try {
+        const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+        const data = parseEstoqueSimples(wb);
+        const n = Object.keys(data).length;
+        if (!n) { setErro(`"${f.name}": nenhum produto de estoque reconhecido.`); continue; }
+        const loja = normLoja(f.name) || "";
+        setEstoqueArqs((prev) => [...prev, { name: f.name, loja, data }]);
+      } catch (e) { setErro(`Estoque "${f.name}": ${e.message}`); }
+    }
+  }, []);
+
   const handleCat = useCallback(async (fl) => {
     const f = fl[0]; if (!f) return;
     try {
@@ -553,10 +615,28 @@ export default function PCPTorteleWeb() {
 
   const semLoja = files.some((f) => !f.loja);
 
+  // Combina estoque do arquivo único (multi-loja) com arquivos por loja
+  const estoqueEfetivo = useMemo(() => {
+    if (!estoqueArqs.length) return estoqueLoja;
+    const merged = {};
+    for (const [cod, lojaMap] of Object.entries(estoqueLoja)) {
+      merged[+cod] = { ...lojaMap };
+    }
+    for (const arq of estoqueArqs) {
+      if (!arq.loja) continue;
+      for (const [cod, qty] of Object.entries(arq.data)) {
+        const c = +cod;
+        if (!merged[c]) merged[c] = {};
+        merged[c][arq.loja] = (merged[c][arq.loja] || 0) + qty;
+      }
+    }
+    return merged;
+  }, [estoqueLoja, estoqueArqs]);
+
   const result = useMemo(() => {
     if (!allSales.length) return null;
-    return computeAll(allSales, { nivelServico, janela, dataRef: new Date(dataRef + "T12:00:00"), usarCombos }, estoqueLoja, categorias, combos);
-  }, [allSales, nivelServico, janela, dataRef, usarCombos, estoqueLoja, categorias, combos]);
+    return computeAll(allSales, { nivelServico, janela, dataRef: new Date(dataRef + "T12:00:00"), usarCombos }, estoqueEfetivo, categorias, combos);
+  }, [allSales, nivelServico, janela, dataRef, usarCombos, estoqueEfetivo, categorias, combos]);
 
   const cats = useMemo(() => result ? [...new Set(result.rows.map((r)=>r.categoria))].sort() : [], [result]);
 
@@ -583,12 +663,17 @@ export default function PCPTorteleWeb() {
 
   const doSave = async () => {
     setSaveStatus("salvando…");
-    const ok = await saveState({ files, estoqueLoja, estoqueInfo, categorias, combos,
+    const ok = await saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos,
       params: { nivelServico, janela, dataRef, usarCombos } });
-    setSaveStatus(ok ? "✓ salvo neste navegador" : "falha ao salvar (base pode ser grande demais para este navegador)");
+    setSaveStatus(ok ? "✓ salvo" : "falha ao salvar");
     setTimeout(()=>setSaveStatus(""), 3000);
   };
-  const doClear = async () => { await clearState(); setSaveStatus("dados da sessão apagados"); setTimeout(()=>setSaveStatus(""),3000); };
+  const doClear = async () => {
+    await clearState();
+    setEstoqueArqs([]);
+    setSaveStatus("dados da sessão apagados");
+    setTimeout(()=>setSaveStatus(""),3000);
+  };
 
   const th = (label, key, extra={}) => (
     <th onClick={()=>{ if(key){ setSortKey(key); setSortDesc(sortKey===key?!sortDesc:true);} }}
@@ -623,7 +708,7 @@ export default function PCPTorteleWeb() {
         )}
         <div style={{ marginLeft:"auto", display:"flex", gap:10, alignItems:"center" }}>
           {saveStatus && <span style={{fontSize:12, color:"#E8A34E"}}>{saveStatus}</span>}
-          <button style={{...S.btnGhost, borderColor:"#E8A34E", color:"#E8A34E"}} onClick={doSave} disabled={!files.length}>💾 Salvar neste navegador</button>
+          <button style={{...S.btnGhost, borderColor:"#E8A34E", color:"#E8A34E"}} onClick={doSave} disabled={!files.length}>💾 Salvar sessão</button>
           <button style={{...S.btnGhost, borderColor:"#8A8073", color:"#B0A794", fontSize:12, padding:"6px 10px"}} onClick={doClear}>limpar salvos</button>
         </div>
       </div>
@@ -632,7 +717,7 @@ export default function PCPTorteleWeb() {
 
         {loadedFromCache && (
           <div style={{ ...S.panel, background:"#FDF6EC", borderColor:"#E8C99A", fontSize:13, padding:"10px 16px" }}>
-            ⚡ Dados restaurados deste navegador (sessão anterior). Suba novas bases para atualizar ou continue de onde parou. Isso não é compartilhado com outros computadores.
+            ⚡ Dados restaurados da sessão anterior. Suba novas bases para atualizar ou continue de onde parou.
           </div>
         )}
 
@@ -667,10 +752,51 @@ export default function PCPTorteleWeb() {
             {semLoja && <div style={{marginTop:8, color:"#C4501E", fontWeight:600, fontSize:12}}>⚠ Selecione a loja dos arquivos marcados.</div>}
           </div>
 
+          {/* Painel Estoque */}
+          <div style={S.panel}>
+            <div style={{ marginBottom:8 }}><span style={S.tag("#25211C","#F6F3EE")}>2</span><b> Estoque atual</b></div>
+            {/* Opção A: arquivo único com todas as lojas */}
+            <button style={{...S.btnGhost, width:"100%", fontSize:12}} onClick={()=>refEst.current?.click()}>
+              Subir arquivo (todas as lojas)
+            </button>
+            <input ref={refEst} type="file" accept=".xlsx,.xls" style={{display:"none"}}
+              onChange={(e)=>{handleEstoque(e.target.files);e.target.value="";}} />
+            {estoqueInfo
+              ? <div style={{marginTop:6, fontSize:12, color:"#2D6A4F", fontWeight:600}}>✓ {estoqueInfo}
+                  <button onClick={()=>{setEstoqueLoja({});setEstoqueInfo(null);}} style={{border:"none",background:"none",color:"#C4501E",cursor:"pointer",marginLeft:6,fontSize:11}}>limpar</button>
+                </div>
+              : <div style={{marginTop:6, fontSize:11, color:"#8A8073"}}>Formato blocos (Cod|Produto|Loja…) ou colunar (Cod|…|ALDEOTA|…|CD).</div>}
+            {/* Opção B: um arquivo por loja (exportação direta do sistema) */}
+            <div style={{borderTop:"1px solid #F0EBE2", marginTop:10, paddingTop:8}}>
+              <div style={{fontSize:11, color:"#6B6153", fontWeight:600, marginBottom:6}}>
+                Ou suba por loja (exportação direta do sistema):
+              </div>
+              <button style={{...S.btnGhost, width:"100%", fontSize:12}} onClick={()=>refEstArq.current?.click()}>
+                Subir por loja (vários arquivos)
+              </button>
+              <input ref={refEstArq} type="file" multiple accept=".xlsx,.xls" style={{display:"none"}}
+                onChange={(e)=>{handleEstoqueArq(e.target.files);e.target.value="";}} />
+              {estoqueArqs.length > 0 && (
+                <div style={{marginTop:6, fontSize:12}}>
+                  {estoqueArqs.map((arq, i) => (
+                    <div key={i} style={{display:"flex", alignItems:"center", gap:6, padding:"3px 0", borderBottom:"1px solid #F0EBE2"}}>
+                      <span style={{flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", fontSize:11}}>{arq.name}</span>
+                      <span style={{...S.mono, color:"#8A8073", fontSize:11}}>{Object.keys(arq.data).length}p</span>
+                      <select value={arq.loja} onChange={(e)=>setEstoqueArqs((prev)=>prev.map((x,k)=>k===i?{...x,loja:e.target.value}:x))}
+                        style={{padding:"2px 5px", borderRadius:4, border:arq.loja?"1px solid #D8D0C2":"2px solid #C4501E", fontSize:11}}>
+                        <option value="">loja?</option>
+                        {[...LOJAS,"CD"].map((l)=><option key={l} value={l}>{l}</option>)}
+                      </select>
+                      <button onClick={()=>setEstoqueArqs((prev)=>prev.filter((_,k)=>k!==i))}
+                        style={{border:"none",background:"none",color:"#C4501E",cursor:"pointer",fontSize:13}}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
           {[
-            { n:"2", t:"Estoque atual", info: estoqueInfo, ref: refEst, handler: handleEstoque,
-              desc:"Aceita seu formato em blocos (Cod|Produto|Loja…) ou colunar (Cod|…|ALDEOTA|MEIRELES|RIOMAR|SUL|CD).",
-              clear: ()=>{setEstoqueLoja({});setEstoqueInfo(null);} },
             { n:"3", t:"Categorias", info: catInfo, ref: refCat, handler: handleCat,
               desc:"Suba a AUX CATEGORIA (colunas Código + Categoria). Pode ser a própria planilha V3.",
               clear: ()=>{setCategorias({});setCatInfo(null);} },
@@ -925,7 +1051,7 @@ export default function PCPTorteleWeb() {
           <div style={{ ...S.panel, textAlign:"center", padding:44, color:"#8A8073" }}>
             <div style={{fontSize:38, marginBottom:6}}>📦</div>
             <div style={{fontSize:16, fontWeight:600, color:"#25211C"}}>Suba as bases de vendas para gerar o PCP</div>
-            <div style={{fontSize:13, marginTop:6}}>Processamento 100% no seu navegador — nada é enviado para nenhum servidor. Use "Salvar neste navegador" para não perder os dados ao fechar a aba (fica só neste computador).</div>
+            <div style={{fontSize:13, marginTop:6}}>Processamento 100% no navegador. Use "Salvar sessão" para não perder os dados ao fechar.</div>
           </div>
         )}
 
