@@ -1,5 +1,13 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 26/08/2026 — v1.4 — Estoque bruto Izzyway + Excel estilizado
+
+### Novidades
+- **Estoque bruto do Izzyway**: agora é possível subir o arquivo de estoque exportado diretamente do sistema (formato "ALD ESTOQUE 25.08.xlsx", "MEI ESTOQUE 25.08.xlsx", etc.) sem nenhum tratamento — o sistema reconhece automaticamente o formato.
+- **Excel exportado reformulado**: cabeçalhos com fundo escuro e texto branco, linhas alternadas para facilitar leitura, largura de colunas ajustada, CMV acima de 45% destacado em vermelho, programação de produção destacada em azul. O arquivo está pronto para imprimir.
+
+---
+
 ## 26/08/2026 — v1.3 — Correção: salvar sessão funcionando no navegador
 
 ### Correção
