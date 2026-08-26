@@ -1,5 +1,12 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 26/08/2026 — v1.3 — Correção: salvar sessão funcionando no navegador
+
+### Correção
+- **"Erro ao salvar" resolvido**: o sistema usava internamente um mecanismo de armazenamento que só existe no ambiente de desenvolvimento — no link do Vercel (navegador comum) ele simplesmente não existia, fazendo o salvar falhar sempre. Corrigido para usar o armazenamento padrão do navegador (`localStorage`). Agora "Salvar sessão" e "Restaurar sessão" funcionam normalmente para todos.
+
+---
+
 ## 26/08/2026 — v1.2 — Indicadores de erro e diagnóstico
 
 ### Novidades
