@@ -477,12 +477,22 @@ const XS = {
   grn: { fill:{patternType:"solid",fgColor:{rgb:"EAF4EE"}}, font:{bold:true,color:{rgb:"2D6A4F"}}, alignment:{horizontal:"right",vertical:"center"}, numFmt:"#,##0" },
 };
 
-function styledSheet(data, cols) {
+const LOGO_HDR_STYLE = { font:{bold:true,sz:14,color:{rgb:"F0DBBF"}}, fill:{patternType:"solid",fgColor:{rgb:"3C2008"}}, alignment:{horizontal:"left",vertical:"center"} };
+const LOGO_SUB_STYLE = { font:{sz:10,italic:true,color:{rgb:"D4B896"}}, fill:{patternType:"solid",fgColor:{rgb:"3C2008"}}, alignment:{horizontal:"right",vertical:"center"} };
+
+function styledSheet(data, cols, title) {
   const ws = {};
   const nr = data.length, nc = data[0]?.length || 0;
+  const dt = new Date().toLocaleDateString("pt-BR");
+  // Linha 0: cabeçalho da empresa
+  ws[XLSX.utils.encode_cell({r:0, c:0})] = { v: "tortelê", t:"s", s: LOGO_HDR_STYLE };
+  for (let c = 1; c < nc-1; c++) ws[XLSX.utils.encode_cell({r:0,c})] = {v:"",t:"s",s:LOGO_HDR_STYLE};
+  ws[XLSX.utils.encode_cell({r:0, c:nc-1})] = { v: `${title||""} · ${dt}`, t:"s", s: LOGO_SUB_STYLE };
+  ws["!merges"] = [{s:{r:0,c:0},e:{r:0,c:Math.max(0,nc-2)}}];
+  // Linhas 1+: header (linha 1) e dados (linhas 2+)
   for (let r = 0; r < nr; r++) {
     for (let c = 0; c < nc; c++) {
-      const addr = XLSX.utils.encode_cell({r, c});
+      const addr = XLSX.utils.encode_cell({r:r+1, c});
       const v = data[r][c];
       let cell;
       if (r === 0) {
@@ -496,10 +506,10 @@ function styledSheet(data, cols) {
       ws[addr] = cell;
     }
   }
-  ws["!ref"] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:nr-1,c:nc-1}});
+  ws["!ref"] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:nr,c:nc-1}});
   ws["!cols"] = (cols || []).map((w) => ({wch: w}));
-  ws["!rows"] = [{hpt:22}];
-  ws["!freeze"] = {xSplit:3, ySplit:1};
+  ws["!rows"] = [{hpt:28}, {hpt:22}];
+  ws["!freeze"] = {xSplit:3, ySplit:2};
   return ws;
 }
 
@@ -518,12 +528,12 @@ function exportAll(result) {
     r.sugerida, r.estoque, r.liquida, r.abc, r.alertas.join(" | "),
     ...r.liqDia, r.liqDia.reduce((a,b)=>a+b,0),
   ]);
-  const ws1 = styledSheet([h1,...d1], [7,38,20,...weekStarts.map(()=>9),9,9,10,8,7,7,7,7,8,7,10,10,10,5,30,...DIAS.map(()=>9),9]);
-  // Destaque visual: SUGERIDA (col 15) verde, LÍQUIDA (col 17) vermelho se 0
-  for (let r = 1; r < d1.length + 1; r++) {
+  const ws1 = styledSheet([h1,...d1], [7,38,20,...weekStarts.map(()=>9),9,9,10,8,7,7,7,7,8,7,10,10,10,5,30,...DIAS.map(()=>9),9], "PCP Semanal");
+  // Destaque: SUGERIDA verde, LÍQUIDA vermelha (dados começam na linha 2 = logo(0)+header(1)+dados(2+))
+  for (let r = 2; r < d1.length + 2; r++) {
     const alt = r % 2 === 0;
-    const sugIdx = 3 + weekStarts.length + 12; // col de Sugerida
-    const liqIdx = sugIdx + 2; // col de LÍQUIDA
+    const sugIdx = 3 + weekStarts.length + 12;
+    const liqIdx = sugIdx + 2;
     const sugCell = XLSX.utils.encode_cell({r, c: sugIdx});
     const liqCell = XLSX.utils.encode_cell({r, c: liqIdx});
     if (ws1[sugCell]) ws1[sugCell].s = { ...XS.num(alt), font:{bold:true,color:{rgb:"2D6A4F"}} };
@@ -535,7 +545,7 @@ function exportAll(result) {
   // ── PCP por Loja ───────────────────────────────────────────────────
   const h3 = ["Cód","Produto","Categoria","Sugerida","Estoque","LÍQUIDA",...LOJAS.map(l=>`${l} %`),...LOJAS.map(l=>`Sug ${l}`),...LOJAS.map(l=>`Est ${l}`),"Est CD",...LOJAS.map(l=>`Líq ${l}`)];
   const d3 = rows.map((r) => [r.cod,r.produto,r.categoria,r.sugerida,r.estoque,r.liquida,...r.mixLoja.map(m=>+(m*100).toFixed(1)),...r.sugLoja,...r.estPorLoja,r.estoquePorLocal[4],...r.liqLoja]);
-  const ws3 = styledSheet([h3,...d3], [7,38,20,10,10,10,...LOJAS.map(()=>8),...LOJAS.map(()=>10),...LOJAS.map(()=>10),10,...LOJAS.map(()=>10)]);
+  const ws3 = styledSheet([h3,...d3], [7,38,20,10,10,10,...LOJAS.map(()=>8),...LOJAS.map(()=>10),...LOJAS.map(()=>10),10,...LOJAS.map(()=>10)], "PCP por Loja");
   XLSX.utils.book_append_sheet(wb, ws3, "PCP por Loja");
 
   // ── Programação ────────────────────────────────────────────────────
@@ -545,9 +555,8 @@ function exportAll(result) {
     ...r.prog.map((v) => v ?? ""),
     r.prog.reduce((a,b)=>a+(b||0),0),
   ]);
-  const ws2 = styledSheet([h2,...d2], [7,38,20,10,10,10,8,8,8,8,8,8,8,14]);
-  // Marcar células com programação (salgados em dia alternado) em azul claro
-  for (let r = 1; r < d2.length + 1; r++) {
+  const ws2 = styledSheet([h2,...d2], [7,38,20,10,10,10,8,8,8,8,8,8,8,14], "Programação");
+  for (let r = 2; r < d2.length + 2; r++) {
     for (let c = 6; c <= 12; c++) {
       const addr = XLSX.utils.encode_cell({r, c});
       if (ws2[addr] && ws2[addr].v !== "" && ws2[addr].v > 0)
@@ -559,8 +568,8 @@ function exportAll(result) {
   // ── Auditoria CMV ──────────────────────────────────────────────────
   const h4 = ["Cód","Produto","Categoria","Qde Vendida","Venda Total","Custo Total","Custo Unit Médio","Preço Médio","CMV %"];
   const d4 = rows.map((r) => [r.cod,r.produto,r.categoria,+r.cmvQde.toFixed(0),+r.cmvVenda.toFixed(2),+r.cmvCusto.toFixed(2),+r.custoUnit.toFixed(2),+r.precoMedio.toFixed(2),r.cmvPct==null?"SEM VENDA":+(r.cmvPct*100).toFixed(1)]);
-  const ws4 = styledSheet([h4,...d4], [7,38,20,12,14,14,16,12,8]);
-  for (let r = 1; r < d4.length + 1; r++) {
+  const ws4 = styledSheet([h4,...d4], [7,38,20,12,14,14,16,12,8], "Auditoria CMV");
+  for (let r = 2; r < d4.length + 2; r++) {
     const cmvCell = XLSX.utils.encode_cell({r, c:8});
     if (ws4[cmvCell] && typeof ws4[cmvCell].v === "number" && ws4[cmvCell].v > 45)
       ws4[cmvCell].s = { fill:{patternType:"solid",fgColor:{rgb:"FFEEEA"}}, font:{bold:true,color:{rgb:"C4501E"}}, alignment:{horizontal:"right",vertical:"center"}, numFmt:'0.0"%"' };
@@ -573,19 +582,20 @@ function exportAll(result) {
 }
 
 /* ================= UI ================= */
+const BRAND = { dark:"#3C2008", cream:"#F0DBBF", amber:"#B96A1B", bg:"#F7F2EB", border:"#E4DDD2", muted:"#7A6450" };
 const S = {
-  page: { minHeight: "100vh", background: "#F6F3EE", color: "#25211C", fontFamily: "'Inter', system-ui, sans-serif", fontSize: 14 },
+  page: { minHeight: "100vh", background: BRAND.bg, color: BRAND.dark, fontFamily: "'Inter', system-ui, sans-serif", fontSize: 14 },
   mono: { fontFamily: "'JetBrains Mono','SF Mono',Consolas,monospace" },
-  panel: { background: "#fff", border: "1px solid #E4DED4", borderRadius: 10, padding: 18, marginBottom: 14 },
-  btn: { background: "#B96A1B", color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", fontWeight: 600, cursor: "pointer", fontSize: 14 },
-  btnGhost: { background: "transparent", color: "#B96A1B", border: "1.5px solid #B96A1B", borderRadius: 8, padding: "8px 14px", fontWeight: 600, cursor: "pointer", fontSize: 13 },
+  panel: { background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: 10, padding: 18, marginBottom: 14 },
+  btn: { background: BRAND.amber, color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", fontWeight: 600, cursor: "pointer", fontSize: 14 },
+  btnGhost: { background: "transparent", color: BRAND.amber, border: `1.5px solid ${BRAND.amber}`, borderRadius: 8, padding: "8px 14px", fontWeight: 600, cursor: "pointer", fontSize: 13 },
   tag: (bg, fg) => ({ display: "inline-block", background: bg, color: fg, borderRadius: 5, fontSize: 11, fontWeight: 700, padding: "2px 7px", marginRight: 4 }),
   tabBtn: (active) => ({
     padding: "10px 18px", border: "none", cursor: "pointer", fontWeight: 600, fontSize: 14,
-    background: active ? "#25211C" : "transparent", color: active ? "#F6F3EE" : "#6B6153",
+    background: active ? BRAND.dark : "transparent", color: active ? BRAND.cream : BRAND.muted,
     borderRadius: "8px 8px 0 0",
   }),
-  thBase: { padding: "7px 8px", fontSize: 11, fontWeight: 700, color: "#6B6153", textTransform: "uppercase", letterSpacing: "0.03em", borderBottom: "2px solid #E4DED4", whiteSpace: "nowrap", position: "sticky", top: 0, background: "#fff", zIndex: 2 },
+  thBase: { padding: "7px 8px", fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: "uppercase", letterSpacing: "0.03em", borderBottom: "2px solid #E4DDD2", whiteSpace: "nowrap", position: "sticky", top: 0, background: "#fff", zIndex: 2 },
 };
 
 export default function PCPTorteleWeb() {
@@ -798,19 +808,23 @@ export default function PCPTorteleWeb() {
       `}</style>
 
       {/* HEADER */}
-      <div style={{ background:"#25211C", color:"#F6F3EE", padding:"16px 26px", display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
-        <div style={{ fontSize:21, fontWeight:700 }}>PCP <span style={{color:"#E8A34E"}}>Tortelê</span></div>
+      <div style={{ background:"#3C2008", color:"#F0DBBF", padding:"0 26px", display:"flex", alignItems:"center", gap:20, flexWrap:"wrap", minHeight:68, borderBottom:"3px solid #B96A1B" }}>
+        <img src="/tortele-logo.png" alt="Tortelê" style={{ height:44, objectFit:"contain", display:"block" }} />
+        <div style={{ width:1, height:36, background:"rgba(240,219,191,0.25)" }} />
+        <div style={{ fontSize:13, fontWeight:600, color:"#F0DBBF", letterSpacing:"0.04em", opacity:0.9 }}>
+          PCP — Planejamento e Controle de Produção
+        </div>
         {result && (
-          <div style={{...S.mono, fontSize:13, opacity:0.9}}>
-            Semana ref: <b style={{color:"#E8A34E"}}>{fmtDM(result.lastWeekStart)}–{fmtDM(addDays(result.lastWeekStart,6))}</b>
-            {" · "}Z=<b style={{color:"#E8A34E"}}>{result.Z}</b>
-            {result.nCombos>0 && usarCombos && <> · combos ativos</>}
+          <div style={{...S.mono, fontSize:12, color:"#D4B896", marginLeft:4}}>
+            semana {fmtDM(result.lastWeekStart)}–{fmtDM(addDays(result.lastWeekStart,6))}
+            {" · "}Z={result.Z}
+            {result.nCombos>0 && usarCombos && " · combos"}
           </div>
         )}
         <div style={{ marginLeft:"auto", display:"flex", gap:10, alignItems:"center" }}>
-          {saveStatus && <span style={{fontSize:12, color:"#E8A34E"}}>{saveStatus}</span>}
-          <button style={{...S.btnGhost, borderColor:"#E8A34E", color:"#E8A34E"}} onClick={doSave} disabled={!files.length}>💾 Salvar sessão</button>
-          <button style={{...S.btnGhost, borderColor:"#8A8073", color:"#B0A794", fontSize:12, padding:"6px 10px"}} onClick={doClear}>limpar salvos</button>
+          {saveStatus && <span style={{fontSize:12, color:"#E8C98C"}}>{saveStatus}</span>}
+          <button style={{...S.btnGhost, borderColor:"#E8C98C", color:"#E8C98C", fontSize:12, padding:"7px 14px"}} onClick={doSave} disabled={!files.length}>Salvar sessão</button>
+          <button style={{...S.btnGhost, borderColor:"rgba(240,219,191,0.3)", color:"#A08060", fontSize:11, padding:"6px 10px"}} onClick={doClear}>limpar</button>
         </div>
       </div>
 
@@ -825,7 +839,7 @@ export default function PCPTorteleWeb() {
         {/* CADASTROS / UPLOADS */}
         <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", gap:12 }}>
           <div style={S.panel}>
-            <div style={{ marginBottom:10 }}><span style={S.tag("#25211C","#F6F3EE")}>1</span><b> Bases de vendas</b></div>
+            <div style={{ marginBottom:10 }}><span style={S.tag(BRAND.dark,BRAND.cream)}>1</span><b> Bases de vendas</b></div>
             <div onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{e.preventDefault();handleVendas(e.dataTransfer.files);}}
               onClick={()=>refVendas.current?.click()}
               style={{ border:"2px dashed #C9BFA9", borderRadius:8, padding:"16px", textAlign:"center", cursor:"pointer", background:"#FCFAF6", color:"#8A8073", fontSize:13 }}>
@@ -862,7 +876,7 @@ export default function PCPTorteleWeb() {
 
           {/* Painel Estoque */}
           <div style={S.panel}>
-            <div style={{ marginBottom:8 }}><span style={S.tag("#25211C","#F6F3EE")}>2</span><b> Estoque atual</b></div>
+            <div style={{ marginBottom:8 }}><span style={S.tag(BRAND.dark,BRAND.cream)}>2</span><b> Estoque atual</b></div>
             {/* Opção A: arquivo único com todas as lojas */}
             <button style={{...S.btnGhost, width:"100%", fontSize:12}} onClick={()=>refEst.current?.click()}>
               Subir arquivo (todas as lojas)
@@ -913,7 +927,7 @@ export default function PCPTorteleWeb() {
               clear: ()=>{setCombos([]);setComboInfo(null);} },
           ].map((b)=>(
             <div key={b.n} style={S.panel}>
-              <div style={{ marginBottom:8 }}><span style={S.tag("#25211C","#F6F3EE")}>{b.n}</span><b> {b.t}</b></div>
+              <div style={{ marginBottom:8 }}><span style={S.tag(BRAND.dark,BRAND.cream)}>{b.n}</span><b> {b.t}</b></div>
               <button style={{...S.btnGhost, width:"100%", fontSize:12}} onClick={()=>b.ref.current?.click()}>Subir arquivo</button>
               <input ref={b.ref} type="file" accept=".xlsx,.xls" style={{display:"none"}}
                 onChange={(e)=>{b.handler(e.target.files);e.target.value="";}} />
@@ -963,7 +977,7 @@ export default function PCPTorteleWeb() {
           <>
             {/* CARDS */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, marginBottom:14 }}>
-              {[["Produtos",num(totais.produtos),"#25211C"],["Sugerida total",num(totais.sugerida),"#B96A1B"],
+              {[["Produtos",num(totais.produtos),BRAND.dark],["Sugerida total",num(totais.sugerida),BRAND.amber],
                 ["Estoque abatido",num(totais.estoque),"#6B6153"],["Produção LÍQUIDA",num(totais.liquida),"#2D6A4F"],
                 ["Com alerta",num(totais.alertas),"#C4501E"]].map(([l,v,c])=>(
                 <div key={l} style={{...S.panel, marginBottom:0, padding:"12px 16px"}}>
@@ -974,7 +988,7 @@ export default function PCPTorteleWeb() {
             </div>
 
             {/* TABS */}
-            <div style={{ display:"flex", gap:2, borderBottom:"2px solid #25211C" }}>
+            <div style={{ display:"flex", gap:2, borderBottom:`2px solid ${BRAND.dark}` }}>
               {[["pcp","PCP Semanal"],["prog","Programação"],["loja","PCP por Loja"],["cmv","Auditoria CMV"]].map(([k,l])=>(
                 <button key={k} style={S.tabBtn(tab===k)} onClick={()=>setTab(k)}>{l}</button>
               ))}
@@ -1027,7 +1041,7 @@ export default function PCPTorteleWeb() {
                         {td(r.cod,{style:{color:"#8A8073"}})}
                         {td(r.produto,{left:true,style:{fontFamily:"'Inter',sans-serif",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
                         {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis"}})}
-                        {r.weeks.map((v,i)=>td(v?num(v):"·",{style:{color:i===7?"#25211C":"#8A8073",fontWeight:i===7?600:400}}))}
+                        {r.weeks.map((v,i)=>td(v?num(v):"·",{style:{color:i===7?BRAND.dark:"#8A8073",fontWeight:i===7?600:400}}))}
                         {td(r.partial?num(r.partial):"·",{style:{color:"#B0A794"}})}
                         {td(r.combo?num(r.combo,1):"·",{style:{background:r.combo?"#FFF3D6":"transparent"}})}
                         {td(num(r.media))}{td(num(r.dp),{style:{color:"#8A8073"}})}
@@ -1150,7 +1164,7 @@ export default function PCPTorteleWeb() {
                         {td(r.cmvPct==null
                             ? <span style={S.tag("#FCE4D6","#C4501E")}>SEM VENDA</span>
                             : `${num(r.cmvPct*100,1)}%`,
-                          {style:{fontWeight:600, color:r.cmvPct!=null&&r.cmvPct>0.45?"#C4501E":"#25211C"}})}
+                          {style:{fontWeight:600, color:r.cmvPct!=null&&r.cmvPct>0.45?"#C4501E":BRAND.dark}})}
                       </tr>
                     ))}
                   </tbody>
@@ -1180,15 +1194,16 @@ export default function PCPTorteleWeb() {
             ) : (
               <>
                 <div style={{fontSize:38, marginBottom:6}}>📦</div>
-                <div style={{fontSize:16, fontWeight:600, color:"#25211C"}}>Suba as bases de vendas para gerar o PCP</div>
+                <div style={{fontSize:16, fontWeight:600, color:BRAND.dark}}>Suba as bases de vendas para gerar o PCP</div>
                 <div style={{fontSize:13, marginTop:6, color:"#8A8073"}}>Processamento 100% no navegador. Use "Salvar sessão" para não perder os dados ao fechar.</div>
               </>
             )}
           </div>
         )}
 
-        <div style={{textAlign:"center", padding:"16px 0 26px", color:"#B0A794", fontSize:12}}>
-          PCP Tortelê · Liberdata Consultoria · client-side
+        <div style={{textAlign:"center", padding:"16px 0 26px", color:"#A08060", fontSize:12}}>
+          <img src="/tortele-logo.png" alt="tortelê" style={{height:22, opacity:0.5, verticalAlign:"middle", marginRight:8}} />
+          Sistema de PCP · Liberdata Consultoria
         </div>
       </div>
     </div>
