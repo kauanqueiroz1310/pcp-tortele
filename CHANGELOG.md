@@ -1,5 +1,15 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 26/08/2026 — v1.5 — Identidade visual Tortelê no site e na exportação
+
+### Novidades
+- **Logo da Tortelê no cabeçalho**: o topo do sistema agora exibe a logo oficial com o fundo marrom chocolate da marca.
+- **Cores da marca aplicadas ao site**: marrom `#3C2008` e creme `#F0DBBF` alinhados com a identidade visual da Tortelê em todo o sistema.
+- **Logo na exportação Excel**: cada aba do arquivo exportado abre com uma linha de cabeçalho escura com o nome "tortelê" e o título da aba, no padrão visual da marca.
+- **Rodapé discreto com a logo** na parte inferior da página.
+
+---
+
 ## 26/08/2026 — v1.4 — Estoque bruto Izzyway + Excel estilizado
 
 ### Novidades
