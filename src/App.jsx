@@ -735,16 +735,23 @@ export default function PCPTorteleWeb() {
             {files.length>0 && (
               <div style={{ marginTop:10, fontSize:12 }}>
                 {files.map((f,i)=>(
-                  <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0", borderBottom:"1px solid #F0EBE2" }}>
-                    <span style={{flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{f.name}</span>
-                    <span style={{...S.mono, color:"#8A8073"}}>{f.rows.length.toLocaleString("pt-BR")}</span>
-                    <select value={f.loja} onChange={(e)=>setFiles((p)=>p.map((x,k)=>k===i?{...x,loja:e.target.value}:x))}
-                      style={{ padding:"3px 6px", borderRadius:5, border:f.loja?"1px solid #D8D0C2":"2px solid #C4501E", fontSize:12 }}>
-                      <option value="">loja?</option>
-                      {LOJAS.map((l)=><option key={l} value={l}>{l}</option>)}
-                    </select>
-                    <button onClick={()=>setFiles((p)=>p.filter((_,k)=>k!==i))}
-                      style={{ border:"none", background:"none", color:"#C4501E", cursor:"pointer", fontSize:14 }}>×</button>
+                  <div key={i}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0", borderBottom: f.warnings?.length?"none":"1px solid #F0EBE2" }}>
+                      <span style={{flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{f.name}</span>
+                      <span style={{...S.mono, color:"#8A8073"}}>{f.rows.length.toLocaleString("pt-BR")}</span>
+                      <select value={f.loja} onChange={(e)=>setFiles((p)=>p.map((x,k)=>k===i?{...x,loja:e.target.value}:x))}
+                        style={{ padding:"3px 6px", borderRadius:5, border:f.loja?"1px solid #D8D0C2":"2px solid #C4501E", fontSize:12 }}>
+                        <option value="">loja?</option>
+                        {LOJAS.map((l)=><option key={l} value={l}>{l}</option>)}
+                      </select>
+                      <button onClick={()=>setFiles((p)=>p.filter((_,k)=>k!==i))}
+                        style={{ border:"none", background:"none", color:"#C4501E", cursor:"pointer", fontSize:14 }}>×</button>
+                    </div>
+                    {f.warnings?.length > 0 && (
+                      <div style={{paddingLeft:4, paddingBottom:4, fontSize:11, color:"#B96A1B", borderBottom:"1px solid #F0EBE2"}}>
+                        {f.warnings.map((w,j)=><div key={j}>ℹ {w}</div>)}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -823,6 +830,14 @@ export default function PCPTorteleWeb() {
             </div>
           ))}
         </div>
+
+        {erro && (
+          <div style={{...S.panel, background:"#FEF2F2", border:"1px solid #FCA5A5", color:"#991B1B", display:"flex", gap:12, alignItems:"center", padding:"12px 16px"}}>
+            <span style={{fontSize:18}}>⚠</span>
+            <span style={{flex:1, fontSize:13}}>{erro}</span>
+            <button onClick={()=>setErro(null)} style={{border:"none", background:"none", color:"#991B1B", cursor:"pointer", fontSize:18, fontWeight:700, lineHeight:1}}>×</button>
+          </div>
+        )}
 
         {/* PARÂMETROS */}
         <div style={{ ...S.panel, display:"flex", gap:18, alignItems:"flex-end", flexWrap:"wrap" }}>
@@ -1048,10 +1063,26 @@ export default function PCPTorteleWeb() {
         )}
 
         {!result && (
-          <div style={{ ...S.panel, textAlign:"center", padding:44, color:"#8A8073" }}>
-            <div style={{fontSize:38, marginBottom:6}}>📦</div>
-            <div style={{fontSize:16, fontWeight:600, color:"#25211C"}}>Suba as bases de vendas para gerar o PCP</div>
-            <div style={{fontSize:13, marginTop:6}}>Processamento 100% no navegador. Use "Salvar sessão" para não perder os dados ao fechar.</div>
+          <div style={{ ...S.panel, textAlign:"center", padding:44 }}>
+            {files.length > 0 ? (
+              <>
+                <div style={{fontSize:38, marginBottom:6}}>⚠️</div>
+                <div style={{fontSize:16, fontWeight:600, color:"#C4501E"}}>PCP não calculado</div>
+                <div style={{fontSize:13, marginTop:6, color:"#6B6153"}}>
+                  {semLoja
+                    ? "Selecione a loja para cada arquivo de vendas marcado em vermelho."
+                    : allSales.length === 0
+                      ? "Nenhuma venda foi reconhecida nos arquivos. Verifique se o formato está correto (exportação do sistema ou Modelo de Vendas)."
+                      : "Verifique os parâmetros e os arquivos carregados."}
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{fontSize:38, marginBottom:6}}>📦</div>
+                <div style={{fontSize:16, fontWeight:600, color:"#25211C"}}>Suba as bases de vendas para gerar o PCP</div>
+                <div style={{fontSize:13, marginTop:6, color:"#8A8073"}}>Processamento 100% no navegador. Use "Salvar sessão" para não perder os dados ao fechar.</div>
+              </>
+            )}
           </div>
         )}
 
