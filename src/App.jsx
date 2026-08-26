@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 
 /* ============================================================
    PCP TORTELÊ — WEB v2
@@ -215,11 +215,18 @@ function parseEstoqueSimples(wb) {
       }
       if (hi >= 0) break;
     }
-    // Fallback: formato izzyway (col0=vazio, col1=Cod., col3=Qde.)
+    // Fallback: formato izzyway vendas (col0=vazio, col1=Cod., col3=Qde.)
     if (hi < 0) {
       const h0 = (data[0] || []).map((c) => String(c || "").toLowerCase().trim());
       if (h0[1] === "cod." && h0[2] === "produto" && (h0[3] || "").startsWith("qde")) {
         hi = 0; iCod = 1; iQty = 3;
+      }
+    }
+    // Fallback: formato estoque bruto Izzyway (Produto|Medida|_|Quantidade|_ — cod em col0, qty em col4)
+    if (hi < 0) {
+      const h0 = (data[0] || []).map((c) => String(c || "").toLowerCase().trim());
+      if (h0[0] === "produto" && h0[3] === "quantidade") {
+        hi = 0; iCod = 0; iQty = 4;
       }
     }
     if (hi < 0 || iQty < 0) continue;
@@ -457,25 +464,111 @@ async function clearState() {
 }
 
 /* ---------------- export ---------------- */
+const XS = {
+  hdr: { font:{bold:true,color:{rgb:"FFFFFF"},sz:11}, fill:{patternType:"solid",fgColor:{rgb:"25211C"}}, alignment:{horizontal:"center",vertical:"center",wrapText:true}, border:{bottom:{style:"medium",color:{rgb:"B96A1B"}}} },
+  hdrOrange: { font:{bold:true,color:{rgb:"FFFFFF"},sz:11}, fill:{patternType:"solid",fgColor:{rgb:"B96A1B"}}, alignment:{horizontal:"center",vertical:"center",wrapText:true} },
+  rowA: { fill:{patternType:"solid",fgColor:{rgb:"F6F3EE"}}, alignment:{vertical:"center"} },
+  rowB: { fill:{patternType:"solid",fgColor:{rgb:"FFFFFF"}}, alignment:{vertical:"center"} },
+  num: (alt) => ({ ...(alt?XS.rowA:XS.rowB), alignment:{horizontal:"right",vertical:"center"}, numFmt:"#,##0" }),
+  dec: (alt) => ({ ...(alt?XS.rowA:XS.rowB), alignment:{horizontal:"right",vertical:"center"}, numFmt:"#,##0.0" }),
+  pct: (alt) => ({ ...(alt?XS.rowA:XS.rowB), alignment:{horizontal:"right",vertical:"center"}, numFmt:'0.0"%"' }),
+  bold: (alt) => ({ ...(alt?XS.rowA:XS.rowB), font:{bold:true}, alignment:{vertical:"center"} }),
+  red: { fill:{patternType:"solid",fgColor:{rgb:"FFEEEA"}}, font:{bold:true,color:{rgb:"C4501E"}}, alignment:{horizontal:"right",vertical:"center"}, numFmt:"#,##0" },
+  grn: { fill:{patternType:"solid",fgColor:{rgb:"EAF4EE"}}, font:{bold:true,color:{rgb:"2D6A4F"}}, alignment:{horizontal:"right",vertical:"center"}, numFmt:"#,##0" },
+};
+
+function styledSheet(data, cols) {
+  const ws = {};
+  const nr = data.length, nc = data[0]?.length || 0;
+  for (let r = 0; r < nr; r++) {
+    for (let c = 0; c < nc; c++) {
+      const addr = XLSX.utils.encode_cell({r, c});
+      const v = data[r][c];
+      let cell;
+      if (r === 0) {
+        cell = { v: v ?? "", t: "s", s: XS.hdr };
+      } else {
+        const alt = r % 2 === 0;
+        if (v == null || v === "") { cell = { v: "", t: "s", s: alt?XS.rowA:XS.rowB }; }
+        else if (typeof v === "number") { cell = { v, t: "n", s: XS.num(alt) }; }
+        else { cell = { v: String(v), t: "s", s: alt?XS.rowA:XS.rowB }; }
+      }
+      ws[addr] = cell;
+    }
+  }
+  ws["!ref"] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:nr-1,c:nc-1}});
+  ws["!cols"] = (cols || []).map((w) => ({wch: w}));
+  ws["!rows"] = [{hpt:22}];
+  ws["!freeze"] = {xSplit:3, ySplit:1};
+  return ws;
+}
+
 function exportAll(result) {
   const { rows, weekStarts } = result;
   const wb = XLSX.utils.book_new();
-  // PCP Semanal
-  const h1 = ["Cod","Produto","Categoria",...weekStarts.map(fmtDM),"Parcial","Combo","Média","DP","CV%","Mín","Máx","Tend%","ES","Marg%","Sugerida","Estoque","LÍQUIDA","ABC","Alertas",...DIAS.map(d=>`Líq ${d}`),"Total dia"];
-  const d1 = rows.map((r)=>[r.cod,r.produto,r.categoria,...r.weeks,r.partial,+r.combo.toFixed(1),+r.media.toFixed(1),+r.dp.toFixed(1),+(r.cv*100).toFixed(1),r.min,r.max,+(r.tend*100).toFixed(1),+r.es.toFixed(1),+(r.margem*100).toFixed(1),r.sugerida,r.estoque,r.liquida,r.abc,r.alertas.join("|"),...r.liqDia,r.liqDia.reduce((a,b)=>a+b,0)]);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([h1,...d1]), "PCP Semanal");
-  // Programação
-  const h2 = ["Cod","Produto","Categoria","Prog Seg","Prog Ter","Prog Qua","Prog Qui","Prog Sex","Prog Sáb","Total",...DIAS.map(d=>`Sug ${d} (quinz)`)];
-  const d2 = rows.map((r)=>[r.cod,r.produto,r.categoria,...r.prog.slice(0,6).map(v=>v==null?"-":v),r.liqDia.reduce((a,b)=>a+b,0),...r.sugDia]);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([h2,...d2]), "Programação");
-  // PCP por Loja
-  const h3 = ["Cod","Produto","Categoria","Sugerida","Estoque","LÍQUIDA",...LOJAS.map(l=>`${l} %`),...LOJAS.map(l=>`Sug ${l}`),...LOJAS.map(l=>`Est ${l}`),"Est CD",...LOJAS.map(l=>`Líq ${l}`)];
-  const d3 = rows.map((r)=>[r.cod,r.produto,r.categoria,r.sugerida,r.estoque,r.liquida,...r.mixLoja.map(m=>+(m*100).toFixed(1)),...r.sugLoja,...r.estPorLoja,r.estoquePorLocal[4],...r.liqLoja]);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([h3,...d3]), "PCP por Loja");
-  // CMV
-  const h4 = ["Cod","Produto","Categoria","Qde Vendida","Venda Total","Custo Total","Custo Unit Médio","Preço Médio","CMV %"];
-  const d4 = rows.map((r)=>[r.cod,r.produto,r.categoria,+r.cmvQde.toFixed(0),+r.cmvVenda.toFixed(2),+r.cmvCusto.toFixed(2),+r.custoUnit.toFixed(2),+r.precoMedio.toFixed(2),r.cmvPct==null?"SEM VENDA":+(r.cmvPct*100).toFixed(1)]);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([h4,...d4]), "Auditoria CMV");
+  const dt = new Date().toLocaleDateString("pt-BR");
+
+  // ── PCP Semanal ────────────────────────────────────────────────────
+  const h1 = ["Cód","Produto","Categoria",...weekStarts.map(fmtDM),"Parcial","Combo","Média/sem","DP","CV%","Mín","Máx","Tend%","ES","Marg%","Sugerida","Estoque","LÍQUIDA","ABC","Alertas",...DIAS.map(d=>`Líq ${d}`),"Total/dia"];
+  const d1 = rows.map((r) => [
+    r.cod, r.produto, r.categoria,
+    ...r.weeks, r.partial,
+    +r.combo.toFixed(1), +r.media.toFixed(1), +r.dp.toFixed(1), +(r.cv*100).toFixed(1),
+    r.min, r.max, +(r.tend*100).toFixed(1), +r.es.toFixed(1), +(r.margem*100).toFixed(1),
+    r.sugerida, r.estoque, r.liquida, r.abc, r.alertas.join(" | "),
+    ...r.liqDia, r.liqDia.reduce((a,b)=>a+b,0),
+  ]);
+  const ws1 = styledSheet([h1,...d1], [7,38,20,...weekStarts.map(()=>9),9,9,10,8,7,7,7,7,8,7,10,10,10,5,30,...DIAS.map(()=>9),9]);
+  // Destaque visual: SUGERIDA (col 15) verde, LÍQUIDA (col 17) vermelho se 0
+  for (let r = 1; r < d1.length + 1; r++) {
+    const alt = r % 2 === 0;
+    const sugIdx = 3 + weekStarts.length + 12; // col de Sugerida
+    const liqIdx = sugIdx + 2; // col de LÍQUIDA
+    const sugCell = XLSX.utils.encode_cell({r, c: sugIdx});
+    const liqCell = XLSX.utils.encode_cell({r, c: liqIdx});
+    if (ws1[sugCell]) ws1[sugCell].s = { ...XS.num(alt), font:{bold:true,color:{rgb:"2D6A4F"}} };
+    if (ws1[liqCell] && ws1[liqCell].v === 0) ws1[liqCell].s = { ...XS.num(alt), fill:{patternType:"solid",fgColor:{rgb:"F6F3EE"}} };
+    else if (ws1[liqCell]) ws1[liqCell].s = { ...XS.red };
+  }
+  XLSX.utils.book_append_sheet(wb, ws1, "PCP Semanal");
+
+  // ── PCP por Loja ───────────────────────────────────────────────────
+  const h3 = ["Cód","Produto","Categoria","Sugerida","Estoque","LÍQUIDA",...LOJAS.map(l=>`${l} %`),...LOJAS.map(l=>`Sug ${l}`),...LOJAS.map(l=>`Est ${l}`),"Est CD",...LOJAS.map(l=>`Líq ${l}`)];
+  const d3 = rows.map((r) => [r.cod,r.produto,r.categoria,r.sugerida,r.estoque,r.liquida,...r.mixLoja.map(m=>+(m*100).toFixed(1)),...r.sugLoja,...r.estPorLoja,r.estoquePorLocal[4],...r.liqLoja]);
+  const ws3 = styledSheet([h3,...d3], [7,38,20,10,10,10,...LOJAS.map(()=>8),...LOJAS.map(()=>10),...LOJAS.map(()=>10),10,...LOJAS.map(()=>10)]);
+  XLSX.utils.book_append_sheet(wb, ws3, "PCP por Loja");
+
+  // ── Programação ────────────────────────────────────────────────────
+  const h2 = ["Cód","Produto","Categoria","Sugerida","Estoque","LÍQUIDA","Seg","Ter","Qua","Qui","Sex","Sáb","Dom","Total programado"];
+  const d2 = rows.map((r) => [
+    r.cod, r.produto, r.categoria, r.sugerida, r.estoque, r.liquida,
+    ...r.prog.map((v) => v ?? ""),
+    r.prog.reduce((a,b)=>a+(b||0),0),
+  ]);
+  const ws2 = styledSheet([h2,...d2], [7,38,20,10,10,10,8,8,8,8,8,8,8,14]);
+  // Marcar células com programação (salgados em dia alternado) em azul claro
+  for (let r = 1; r < d2.length + 1; r++) {
+    for (let c = 6; c <= 12; c++) {
+      const addr = XLSX.utils.encode_cell({r, c});
+      if (ws2[addr] && ws2[addr].v !== "" && ws2[addr].v > 0)
+        ws2[addr].s = { fill:{patternType:"solid",fgColor:{rgb:"EDF1F8"}}, font:{bold:true,color:{rgb:"264478"}}, alignment:{horizontal:"center",vertical:"center"}, numFmt:"#,##0" };
+    }
+  }
+  XLSX.utils.book_append_sheet(wb, ws2, "Programação");
+
+  // ── Auditoria CMV ──────────────────────────────────────────────────
+  const h4 = ["Cód","Produto","Categoria","Qde Vendida","Venda Total","Custo Total","Custo Unit Médio","Preço Médio","CMV %"];
+  const d4 = rows.map((r) => [r.cod,r.produto,r.categoria,+r.cmvQde.toFixed(0),+r.cmvVenda.toFixed(2),+r.cmvCusto.toFixed(2),+r.custoUnit.toFixed(2),+r.precoMedio.toFixed(2),r.cmvPct==null?"SEM VENDA":+(r.cmvPct*100).toFixed(1)]);
+  const ws4 = styledSheet([h4,...d4], [7,38,20,12,14,14,16,12,8]);
+  for (let r = 1; r < d4.length + 1; r++) {
+    const cmvCell = XLSX.utils.encode_cell({r, c:8});
+    if (ws4[cmvCell] && typeof ws4[cmvCell].v === "number" && ws4[cmvCell].v > 45)
+      ws4[cmvCell].s = { fill:{patternType:"solid",fgColor:{rgb:"FFEEEA"}}, font:{bold:true,color:{rgb:"C4501E"}}, alignment:{horizontal:"right",vertical:"center"}, numFmt:'0.0"%"' };
+    else if (ws4[cmvCell] && typeof ws4[cmvCell].v === "number")
+      ws4[cmvCell].s = { ...XS.pct(r%2===0) };
+  }
+  XLSX.utils.book_append_sheet(wb, ws4, "Auditoria CMV");
+
   XLSX.writeFile(wb, `PCP_Tortele_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
