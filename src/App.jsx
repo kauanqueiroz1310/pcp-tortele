@@ -391,7 +391,15 @@ function computeAll(sales, params, estoqueLoja, categorias, combos) {
   return { rows: withVol, weekStarts, partialWeekStart, lastWeekStart, Z, nCombos: combos.length };
 }
 
-/* ---------------- persistência (window.storage) ---------------- */
+/* ---------------- persistência (localStorage) ---------------- */
+// Shim: se rodar fora do runtime de artifact (Vercel, navegador comum), usa localStorage
+if (typeof window !== "undefined" && !window.storage) {
+  window.storage = {
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch(_){} return Promise.resolve(); },
+    get: (k) => { try { const v = localStorage.getItem(k); return Promise.resolve(v !== null ? { value: v } : null); } catch(_){ return Promise.resolve(null); } },
+    delete: (k) => { try { localStorage.removeItem(k); } catch(_){} return Promise.resolve(); },
+  };
+}
 const CHUNK = 20000;
 async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params }) {
   try {
