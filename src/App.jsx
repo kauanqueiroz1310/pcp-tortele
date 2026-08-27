@@ -761,7 +761,7 @@ export default function PCPTorteleWeb() {
 
   const progWeekDates = useMemo(() => {
     const start = new Date(progWeekStart + "T12:00:00");
-    return Array.from({length:7}, (_,i) => addDays(start, i));
+    return Array.from({length:14}, (_,i) => addDays(start, i));
   }, [progWeekStart]);
 
   const cats = useMemo(() => result ? [...new Set(result.rows.map((r)=>r.categoria))].sort() : [], [result]);
@@ -1094,30 +1094,34 @@ export default function PCPTorteleWeb() {
                 {/* Controles da semana */}
                 <div style={{...S.panel, display:"flex", gap:18, alignItems:"center", flexWrap:"wrap", padding:"12px 18px"}}>
                   <label style={{fontSize:12, fontWeight:600, color:BRAND.muted, display:"flex", alignItems:"center", gap:8}}>
-                    Semana de produção (início):
+                    Início do período (2 semanas):
                     <input type="date" value={progWeekStart} onChange={(e)=>setProgWeekStart(e.target.value)}
                       style={{padding:"5px 10px", borderRadius:6, border:"1px solid #D8D0C2", fontSize:13}} />
                   </label>
                   <div style={{fontSize:12, color:BRAND.muted}}>
-                    {fmtDM(progWeekDates[0])} (Seg) — {fmtDM(progWeekDates[6])} (Dom)
+                    {fmtDM(progWeekDates[0])} (Seg) — {fmtDM(progWeekDates[13])} (Dom)
                   </div>
                   <div style={{marginLeft:"auto", display:"flex", gap:10, alignItems:"center"}}>
                     <span style={{fontSize:11, color:"#8A8073"}}>
-                      Edite as células para ajustar · verde = acima do ES · vermelho = abaixo
+                      vnd = venda prevista · campo editável = produção · número colorido = estoque projetado (verde ≥ ES, vermelho &lt; ES)
                     </span>
                     <button style={{...S.btn, fontSize:12, padding:"7px 14px"}}
                       onClick={()=>{
-                        // exportar programação
                         const wb = XLSX.utils.book_new();
-                        const hdr = ["Cód","Produto","Categoria","Setor","Est. Atual","ES","Líquida",
-                          ...progWeekDates.map(d=>fmtDM(d)+" "+DIAS[(d.getDay()+6)%7]),"Total","Saldo"];
+                        const hdr = ["Cód","Produto","Categoria","Setor","Est. Atual","ES","Líquida (sem)",
+                          ...progWeekDates.map(d=>fmtDM(d)+" "+DIAS[(d.getDay()+6)%7]),"Total 2 sem","Saldo"];
                         const body = visRows.slice(0,400).map(r=>{
-                          const vals = progWeekDates.map((_,di)=>progEdits[`${r.cod}_${di}`]??(r.prog[di]??0));
+                          const vals = progWeekDates.map((d, di)=>{
+                            const wk = Math.floor(di/7);
+                            const dow = di%7;
+                            const wKey = addDays(new Date(progWeekStart+"T12:00:00"), wk*7).toISOString().slice(0,10);
+                            return progEdits[`${r.cod}_${wKey}_${dow}`]??(r.prog[dow]??0);
+                          });
                           const tot = vals.reduce((s,v)=>s+v,0);
-                          return [r.cod,r.produto,r.categoria,r.setor??"-",r.estoque,Math.ceil(r.es),r.liquida,...vals,tot,tot-r.liquida];
+                          return [r.cod,r.produto,r.categoria,r.setor??"-",r.estoque,Math.ceil(r.es),r.liquida,...vals,tot,tot-r.liquida*2];
                         });
                         const ws = XLSX.utils.aoa_to_sheet([hdr,...body]);
-                        ws["!cols"]=[{wch:7},{wch:36},{wch:18},{wch:10},{wch:10},{wch:8},{wch:10},...progWeekDates.map(()=>({wch:12})),{wch:9},{wch:8}];
+                        ws["!cols"]=[{wch:7},{wch:36},{wch:18},{wch:10},{wch:10},{wch:8},{wch:10},...progWeekDates.map(()=>({wch:12})),{wch:10},{wch:8}];
                         XLSX.utils.book_append_sheet(wb,ws,"Programação");
                         XLSX.writeFile(wb,`Prog_Tortele_${progWeekStart}.xlsx`);
                       }}>⬇ Exportar (Excel)</button>
@@ -1128,35 +1132,63 @@ export default function PCPTorteleWeb() {
 
                 {/* Tabela interativa */}
                 <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"62vh"}}>
-                  <table style={{borderCollapse:"collapse", width:"100%", fontSize:11.5, minWidth:1400}}>
+                  <table style={{borderCollapse:"collapse", width:"100%", fontSize:11.5, minWidth:1900}}>
                     <thead>
+                      <tr>
+                        <th colSpan={5} style={{...S.thBase,background:"#fff",borderBottom:"none"}} />
+                        <th colSpan={7} style={{background:"#EDF1F8",color:"#264478",textAlign:"center",fontSize:11,fontWeight:700,padding:"4px 3px",borderBottom:"2px solid #264478",position:"sticky",top:0,zIndex:2}}>
+                          Semana 1 · {fmtDM(progWeekDates[0])} – {fmtDM(progWeekDates[6])}
+                        </th>
+                        <th colSpan={7} style={{background:"#E8F0E4",color:"#2D6A4F",textAlign:"center",fontSize:11,fontWeight:700,padding:"4px 3px",borderLeft:"3px solid #B96A1B",borderBottom:"2px solid #2D6A4F",position:"sticky",top:0,zIndex:2}}>
+                          Semana 2 · {fmtDM(progWeekDates[7])} – {fmtDM(progWeekDates[13])}
+                        </th>
+                        <th colSpan={2} style={{...S.thBase,background:"#fff",borderBottom:"none"}} />
+                      </tr>
                       <tr>
                         {th("Cód","cod")}
                         {th("Produto","produto",{left:true})}
                         {th("Cat.","categoria",{left:true})}
-                        {th("Líq.","liquida",{style:{background:"#2D6A4F",color:"#fff"}})}
+                        {th("Líq/sem","liquida",{style:{background:"#2D6A4F",color:"#fff"}})}
                         {th("Estq","estoque")}
                         {progWeekDates.map((d,i)=>(
-                          <th key={i} style={{...S.thBase,background:"#EDF1F8",color:"#264478",padding:"4px 3px",minWidth:70,textAlign:"center"}}>
-                            {DIAS[i]}<br/>
+                          <th key={i} style={{...S.thBase,
+                            background: Math.floor(i/7)===0 ? "#EDF1F8" : "#E8F0E4",
+                            color: Math.floor(i/7)===0 ? "#264478" : "#2D6A4F",
+                            borderLeft: i===7 ? "3px solid #B96A1B" : undefined,
+                            padding:"4px 3px", minWidth:72, textAlign:"center"}}>
+                            {DIAS[i%7]}<br/>
                             <span style={{fontWeight:400,fontSize:10}}>{fmtDM(d)}</span>
                           </th>
                         ))}
                         {th("Total",null,{style:{fontWeight:700}})}
-                        {th("Saldo",null)}
+                        {th("Saldo 2sem",null)}
                       </tr>
                     </thead>
                     <tbody style={S.mono}>
                       {visRows.slice(0,400).map((r)=>{
-                        let runEst = r.estoque || 0;
-                        const dayData = progWeekDates.map((_,di)=>{
-                          const prod = progEdits[`${r.cod}_${di}`] ?? (r.prog[di] ?? 0);
-                          const venda = Math.ceil(r.mixDia[di] * r.media);
+                        // Projeta estoque inicial para a semana selecionada
+                        const partialTs = result.partialWeekStart.getTime();
+                        const selTs = new Date(progWeekStart + "T12:00:00").getTime();
+                        const weeksDiff = Math.max(0, Math.round((selTs - partialTs) / (7 * 86400000)));
+                        let startEst = r.estoque || 0;
+                        for (let w = 0; w < weeksDiff; w++) {
+                          const wKey = addDays(result.partialWeekStart, w * 7).toISOString().slice(0, 10);
+                          let weekProd = 0;
+                          for (let di = 0; di < 7; di++) weekProd += progEdits[`${r.cod}_${wKey}_${di}`] ?? (r.prog[di] ?? 0);
+                          startEst = Math.round(startEst + weekProd - r.media);
+                        }
+                        let runEst = startEst;
+                        const dayData = progWeekDates.map((d, di)=>{
+                          const wk = Math.floor(di / 7);
+                          const dow = di % 7;
+                          const wKey = addDays(new Date(progWeekStart+"T12:00:00"), wk*7).toISOString().slice(0,10);
+                          const prod = progEdits[`${r.cod}_${wKey}_${dow}`] ?? (r.prog[dow] ?? 0);
+                          const venda = Math.ceil(r.mixDia[dow] * r.media);
                           runEst = Math.round(runEst + prod - venda);
-                          return { prod, venda, estProj: runEst };
+                          return { prod, venda, estProj: runEst, wKey, dow };
                         });
                         const totalProg = dayData.reduce((s,d)=>s+d.prod,0);
-                        const saldo = totalProg - r.liquida;
+                        const saldo = totalProg - r.liquida * 2;
                         return (
                           <tr key={r.cod} style={{borderBottom:"2px solid #F0EBE2"}}>
                             {td(r.cod,{style:{color:"#8A8073",fontSize:11}})}
@@ -1167,26 +1199,37 @@ export default function PCPTorteleWeb() {
                             {dayData.map((dd,di)=>{
                               const estOk = dd.estProj >= r.es;
                               const hasVal = dd.prod > 0;
+                              const isWeekend = (di%7)===5||(di%7)===6;
                               return (
-                                <td key={di} style={{padding:"3px 3px",background:di===5||di===6?"#FAFAF5":"transparent",textAlign:"center"}}>
-                                  <div style={{fontSize:9,color:"#B0A794",marginBottom:1,fontFamily:"'Inter',sans-serif"}}>↓{dd.venda||0}</div>
+                                <td key={di} style={{
+                                  padding:"3px 3px",
+                                  background: isWeekend ? "#F5F3EE" : (Math.floor(di/7)===1 ? "#FAFDF8" : "transparent"),
+                                  borderLeft: di===7 ? "3px solid #B96A1B" : undefined,
+                                  textAlign:"center", minWidth:72}}>
+                                  <div style={{fontSize:10,color:"#9A8E7F",marginBottom:2,fontFamily:"'Inter',sans-serif",fontWeight:500}}>
+                                    vnd {dd.venda||0}
+                                  </div>
                                   <input
                                     type="number" min="0"
-                                    value={progEdits[`${r.cod}_${di}`] !== undefined ? progEdits[`${r.cod}_${di}`] : (r.prog[di] ?? "")}
+                                    value={progEdits[`${r.cod}_${dd.wKey}_${dd.dow}`] !== undefined
+                                      ? progEdits[`${r.cod}_${dd.wKey}_${dd.dow}`]
+                                      : (r.prog[dd.dow] ?? "")}
                                     onChange={(e)=>{
                                       const v = e.target.value === "" ? undefined : Math.max(0,parseInt(e.target.value)||0);
                                       setProgEdits(prev=>{
                                         const n={...prev};
-                                        if(v===undefined) delete n[`${r.cod}_${di}`]; else n[`${r.cod}_${di}`]=v;
+                                        const key=`${r.cod}_${dd.wKey}_${dd.dow}`;
+                                        if(v===undefined) delete n[key]; else n[key]=v;
                                         return n;
                                       });
                                     }}
-                                    style={{width:52,padding:"3px 2px",borderRadius:4,border:"1px solid",
+                                    style={{width:54,padding:"4px 2px",borderRadius:4,border:"1px solid",
                                       borderColor:hasVal?"#264478":"#D8D0C2",
                                       background:hasVal?"#EDF1F8":"#FAFAFA",
-                                      color:"#264478",fontWeight:600,fontSize:12,fontFamily:"'JetBrains Mono',monospace",textAlign:"center"}}
+                                      color:hasVal?"#264478":"#8A8073",
+                                      fontWeight:600,fontSize:13,fontFamily:"'JetBrains Mono',monospace",textAlign:"center"}}
                                   />
-                                  <div style={{fontSize:9,color:estOk?"#2D6A4F":"#C4501E",fontWeight:600,marginTop:1,fontFamily:"'Inter',sans-serif"}}>
+                                  <div style={{fontSize:11,color:estOk?"#2D6A4F":"#C4501E",fontWeight:700,marginTop:2,fontFamily:"'JetBrains Mono',monospace"}}>
                                     {num(dd.estProj)}
                                   </div>
                                 </td>
