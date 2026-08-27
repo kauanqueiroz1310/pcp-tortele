@@ -571,23 +571,24 @@ function exportAll(result) {
   XLSX.utils.book_append_sheet(wb, ws3, "PCP por Loja");
 
   // ── Envio Diário por Loja ──────────────────────────────────────────
-  // Usa distribute() para garantir: sum(dias por loja) = total loja, sum(lojas) = media semanal
+  // Base = SUGERIDA (= média + ES), mesma coluna exibida no PCP Semanal.
+  // distribute() garante: sum(dias de uma loja) = total loja, sum(totais lojas) = sugerida.
   const diasAbrev = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
-  const h5 = ["Cód","Produto","Categoria","Média Semanal",
+  const h5 = ["Cód","Produto","Categoria","Sugerida","Média","ES",
     ...LOJAS.flatMap(l => diasAbrev.map(d => `${l.slice(0,3)} ${d}`)),
     ...LOJAS.map(l => `Total ${l.slice(0,3)}`)];
   const d5 = rows.map(r => {
-    const weekTot = Math.round(r.media);
+    const weekTot = r.sugerida;                                // mesma base do PCP Semanal
     const lojaTots = distribute(weekTot, r.mixLoja);           // soma = weekTot ✓
     const dayCells = lojaTots.map(lt => distribute(lt, r.mixDia)); // soma por loja = lojaTot ✓
     return [
-      r.cod, r.produto, r.categoria, weekTot,
+      r.cod, r.produto, r.categoria, r.sugerida, Math.round(r.media), Math.round(r.es),
       ...LOJAS.flatMap((_, li) => dayCells[li]),
       ...lojaTots,
     ];
   });
   const ws5 = styledSheet([h5,...d5],
-    [7, 38, 20, 10, ...LOJAS.flatMap(() => diasAbrev.map(() => 8)), ...LOJAS.map(() => 11)],
+    [7, 38, 20, 10, 9, 9, ...LOJAS.flatMap(() => diasAbrev.map(() => 8)), ...LOJAS.map(() => 11)],
     "Envio Diário por Loja");
   XLSX.utils.book_append_sheet(wb, ws5, "Envio Diário");
 

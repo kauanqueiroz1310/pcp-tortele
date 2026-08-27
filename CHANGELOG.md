@@ -1,5 +1,13 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 27/08/2026 — v1.13 — Correção: Envio Diário agora usa Sugerida como base
+
+### Correção
+- **Base do Envio Diário corrigida**: o relatório Excel "Envio Diário" agora usa o valor **Sugerida** (= Média + Estoque de Segurança) como total semanal — o mesmo número exibido na coluna Sugerida do PCP Semanal. Antes usava apenas a Média, gerando uma diferença do tamanho do ES (ex.: item 900 mostrava 3076 vs 3448 no PCP). Agora ambos mostram o mesmo valor.
+- **Novas colunas no Excel**: adicionadas colunas "Média" e "ES" ao lado de "Sugerida" para facilitar conferência.
+
+---
+
 ## 27/08/2026 — v1.6 — Drag-and-drop + Aba de Programação interativa
 
 ### Novidades
