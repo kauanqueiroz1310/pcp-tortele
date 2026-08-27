@@ -52,6 +52,18 @@ const isSalgado = (cat) => {
   return c.includes("salgado");
 };
 
+// Distribui um total inteiro entre N grupos com pesos, garantindo sum(result) === total
+function distribute(total, weights) {
+  const wsum = weights.reduce((a,b)=>a+b,0);
+  if (!wsum || !total) return weights.map(()=>0);
+  const exact = weights.map(w=>(total*w)/wsum);
+  const result = exact.map(Math.floor);
+  let rem = total - result.reduce((a,b)=>a+b,0);
+  const order = exact.map((e,i)=>[e-Math.floor(e),i]).sort((a,b)=>b[0]-a[0]);
+  for (let k=0; k<rem; k++) result[order[k][1]]++;
+  return result;
+}
+
 /* ---------------- parsers ---------------- */
 function parseVendas(wb) {
   const rows = [], warnings = [];
@@ -559,19 +571,19 @@ function exportAll(result) {
   XLSX.utils.book_append_sheet(wb, ws3, "PCP por Loja");
 
   // ── Envio Diário por Loja ──────────────────────────────────────────
-  // Totais semanais por loja calculados primeiro (para consistência)
+  // Usa distribute() para garantir: sum(dias por loja) = total loja, sum(lojas) = media semanal
   const diasAbrev = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
   const h5 = ["Cód","Produto","Categoria","Média Semanal",
     ...LOJAS.flatMap(l => diasAbrev.map(d => `${l.slice(0,3)} ${d}`)),
     ...LOJAS.map(l => `Total ${l.slice(0,3)}`)];
   const d5 = rows.map(r => {
-    const lojaWkTot = LOJAS.map((_, li) => Math.round(r.media * r.mixLoja[li]));
+    const weekTot = Math.round(r.media);
+    const lojaTots = distribute(weekTot, r.mixLoja);           // soma = weekTot ✓
+    const dayCells = lojaTots.map(lt => distribute(lt, r.mixDia)); // soma por loja = lojaTot ✓
     return [
-      r.cod, r.produto, r.categoria, Math.round(r.media),
-      ...LOJAS.flatMap((_, li) => diasAbrev.map((__, dow) =>
-        Math.round(r.media * r.mixLoja[li] * r.mixDia[dow])
-      )),
-      ...lojaWkTot,
+      r.cod, r.produto, r.categoria, weekTot,
+      ...LOJAS.flatMap((_, li) => dayCells[li]),
+      ...lojaTots,
     ];
   });
   const ws5 = styledSheet([h5,...d5],
