@@ -1,5 +1,19 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 27/08/2026 — v1.6 — Drag-and-drop + Aba de Programação interativa
+
+### Novidades
+- **Drag-and-drop em todos os painéis**: agora é possível arrastar diretamente os arquivos de estoque, categorias e combos para as áreas de upload — igual ao painel de vendas.
+- **Aba Programação reformulada**: agora mostra as datas reais da semana de produção como colunas (Seg 25/08, Ter 26/08…). Para cada produto e cada dia:
+  - Linha cinza: venda prevista para aquele dia (baseada no histórico de mix)
+  - Campo editável: quantidade a produzir naquele dia (pré-preenchida pelo PCP, editável manualmente)
+  - Número colorido: estoque projetado ao final do dia — verde se acima do estoque de segurança, vermelho se abaixo
+- **Saldo de programação**: coluna final mostra se a programação da semana cobre a produção líquida recomendada (+) ou deixa faltando (-).
+- **Exportação da programação em Excel**: botão para baixar a tabela com os ajustes feitos.
+- **Resetar ajustes**: botão para voltar aos valores calculados automaticamente pelo PCP.
+
+---
+
 ## 26/08/2026 — v1.5 — Identidade visual Tortelê no site e na exportação
 
 ### Novidades
