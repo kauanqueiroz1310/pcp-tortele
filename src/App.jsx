@@ -612,6 +612,11 @@ export default function PCPTorteleWeb() {
   const [nivelServico, setNivelServico] = useState(0.9);
   const [janela, setJanela] = useState(4);
   const [dataRef, setDataRef] = useState(() => new Date().toISOString().slice(0, 10));
+  const [progEdits, setProgEdits] = useState({}); // {`${cod}_${dayIdx}`: qty} — ajustes manuais
+  const [progWeekStart, setProgWeekStart] = useState(() => {
+    const today = new Date(); const dow = (today.getDay()+6)%7;
+    return addDays(today, dow===0?0:7-dow).toISOString().slice(0,10);
+  });
   const refEstArq = useRef(null);
 
   const [busca, setBusca] = useState("");
@@ -749,6 +754,16 @@ export default function PCPTorteleWeb() {
     return computeAll(allSales, { nivelServico, janela, dataRef: new Date(dataRef + "T12:00:00"), usarCombos }, estoqueEfetivo, categorias, combos);
   }, [allSales, nivelServico, janela, dataRef, usarCombos, estoqueEfetivo, categorias, combos]);
 
+  // Sincroniza semana de produção com a semana parcial do resultado
+  useEffect(() => {
+    if (result?.partialWeekStart) setProgWeekStart(result.partialWeekStart.toISOString().slice(0,10));
+  }, [result]);
+
+  const progWeekDates = useMemo(() => {
+    const start = new Date(progWeekStart + "T12:00:00");
+    return Array.from({length:7}, (_,i) => addDays(start, i));
+  }, [progWeekStart]);
+
   const cats = useMemo(() => result ? [...new Set(result.rows.map((r)=>r.categoria))].sort() : [], [result]);
 
   const visRows = useMemo(() => {
@@ -878,11 +893,13 @@ export default function PCPTorteleWeb() {
           <div style={S.panel}>
             <div style={{ marginBottom:8 }}><span style={S.tag(BRAND.dark,BRAND.cream)}>2</span><b> Estoque atual</b></div>
             {/* Opção A: arquivo único com todas as lojas */}
-            <button style={{...S.btnGhost, width:"100%", fontSize:12}} onClick={()=>refEst.current?.click()}>
-              Subir arquivo (todas as lojas)
-            </button>
-            <input ref={refEst} type="file" accept=".xlsx,.xls" style={{display:"none"}}
-              onChange={(e)=>{handleEstoque(e.target.files);e.target.value="";}} />
+            <div onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{e.preventDefault();handleEstoque(e.dataTransfer.files);}}
+              onClick={()=>refEst.current?.click()}
+              style={{border:"2px dashed #C9BFA9",borderRadius:8,padding:"10px 12px",textAlign:"center",cursor:"pointer",background:"#FCFAF6",color:"#8A8073",fontSize:12}}>
+              Arraste ou clique — todas as lojas
+              <input ref={refEst} type="file" accept=".xlsx,.xls" style={{display:"none"}}
+                onChange={(e)=>{handleEstoque(e.target.files);e.target.value="";}} />
+            </div>
             {estoqueInfo
               ? <div style={{marginTop:6, fontSize:12, color:"#2D6A4F", fontWeight:600}}>✓ {estoqueInfo}
                   <button onClick={()=>{setEstoqueLoja({});setEstoqueInfo(null);}} style={{border:"none",background:"none",color:"#C4501E",cursor:"pointer",marginLeft:6,fontSize:11}}>limpar</button>
@@ -893,11 +910,13 @@ export default function PCPTorteleWeb() {
               <div style={{fontSize:11, color:"#6B6153", fontWeight:600, marginBottom:6}}>
                 Ou suba por loja (exportação direta do sistema):
               </div>
-              <button style={{...S.btnGhost, width:"100%", fontSize:12}} onClick={()=>refEstArq.current?.click()}>
-                Subir por loja (vários arquivos)
-              </button>
-              <input ref={refEstArq} type="file" multiple accept=".xlsx,.xls" style={{display:"none"}}
-                onChange={(e)=>{handleEstoqueArq(e.target.files);e.target.value="";}} />
+              <div onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{e.preventDefault();handleEstoqueArq(e.dataTransfer.files);}}
+                onClick={()=>refEstArq.current?.click()}
+                style={{border:"2px dashed #C9BFA9",borderRadius:8,padding:"8px 12px",textAlign:"center",cursor:"pointer",background:"#FCFAF6",color:"#8A8073",fontSize:11}}>
+                Arraste ou clique — por loja (vários)
+                <input ref={refEstArq} type="file" multiple accept=".xlsx,.xls" style={{display:"none"}}
+                  onChange={(e)=>{handleEstoqueArq(e.target.files);e.target.value="";}} />
+              </div>
               {estoqueArqs.length > 0 && (
                 <div style={{marginTop:6, fontSize:12}}>
                   {estoqueArqs.map((arq, i) => (
@@ -928,9 +947,13 @@ export default function PCPTorteleWeb() {
           ].map((b)=>(
             <div key={b.n} style={S.panel}>
               <div style={{ marginBottom:8 }}><span style={S.tag(BRAND.dark,BRAND.cream)}>{b.n}</span><b> {b.t}</b></div>
-              <button style={{...S.btnGhost, width:"100%", fontSize:12}} onClick={()=>b.ref.current?.click()}>Subir arquivo</button>
-              <input ref={b.ref} type="file" accept=".xlsx,.xls" style={{display:"none"}}
-                onChange={(e)=>{b.handler(e.target.files);e.target.value="";}} />
+              <div onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{e.preventDefault();b.handler(e.dataTransfer.files);}}
+                onClick={()=>b.ref.current?.click()}
+                style={{border:"2px dashed #C9BFA9",borderRadius:8,padding:"12px",textAlign:"center",cursor:"pointer",background:"#FCFAF6",color:"#8A8073",fontSize:12}}>
+                Arraste ou clique para subir
+                <input ref={b.ref} type="file" accept=".xlsx,.xls" style={{display:"none"}}
+                  onChange={(e)=>{b.handler(e.target.files);e.target.value="";}} />
+              </div>
               {b.info
                 ? <div style={{marginTop:8, fontSize:12, color:"#2D6A4F", fontWeight:600}}>✓ {b.info}
                     <button onClick={b.clear} style={{border:"none",background:"none",color:"#C4501E",cursor:"pointer",marginLeft:6,fontSize:11}}>limpar</button>
@@ -1068,33 +1091,116 @@ export default function PCPTorteleWeb() {
             {/* ===== TAB: PROGRAMAÇÃO ===== */}
             {tab==="prog" && (
               <>
-                <div style={{...S.panel, fontSize:12, color:"#6B6153", background:"#FDF6EC"}}>
-                  <b>Regra de produção:</b> categorias com "Salgado" produzem em dias alternados —
-                  Seg cobre Ter+Qua · Qua cobre Qui+Sex · Sex cobre Sáb+Dom · Sáb cobre Seg seguinte.
-                  Demais categorias produzem no dia (Sáb cobre Sáb+Dom).
-                  A tabela auxiliar quinzenal usa a <b>Sugerida</b> (bruta, sem descontar estoque).
+                {/* Controles da semana */}
+                <div style={{...S.panel, display:"flex", gap:18, alignItems:"center", flexWrap:"wrap", padding:"12px 18px"}}>
+                  <label style={{fontSize:12, fontWeight:600, color:BRAND.muted, display:"flex", alignItems:"center", gap:8}}>
+                    Semana de produção (início):
+                    <input type="date" value={progWeekStart} onChange={(e)=>setProgWeekStart(e.target.value)}
+                      style={{padding:"5px 10px", borderRadius:6, border:"1px solid #D8D0C2", fontSize:13}} />
+                  </label>
+                  <div style={{fontSize:12, color:BRAND.muted}}>
+                    {fmtDM(progWeekDates[0])} (Seg) — {fmtDM(progWeekDates[6])} (Dom)
+                  </div>
+                  <div style={{marginLeft:"auto", display:"flex", gap:10, alignItems:"center"}}>
+                    <span style={{fontSize:11, color:"#8A8073"}}>
+                      Edite as células para ajustar · verde = acima do ES · vermelho = abaixo
+                    </span>
+                    <button style={{...S.btn, fontSize:12, padding:"7px 14px"}}
+                      onClick={()=>{
+                        // exportar programação
+                        const wb = XLSX.utils.book_new();
+                        const hdr = ["Cód","Produto","Categoria","Setor","Est. Atual","ES","Líquida",
+                          ...progWeekDates.map(d=>fmtDM(d)+" "+DIAS[(d.getDay()+6)%7]),"Total","Saldo"];
+                        const body = visRows.slice(0,400).map(r=>{
+                          const vals = progWeekDates.map((_,di)=>progEdits[`${r.cod}_${di}`]??(r.prog[di]??0));
+                          const tot = vals.reduce((s,v)=>s+v,0);
+                          return [r.cod,r.produto,r.categoria,r.setor??"-",r.estoque,Math.ceil(r.es),r.liquida,...vals,tot,tot-r.liquida];
+                        });
+                        const ws = XLSX.utils.aoa_to_sheet([hdr,...body]);
+                        ws["!cols"]=[{wch:7},{wch:36},{wch:18},{wch:10},{wch:10},{wch:8},{wch:10},...progWeekDates.map(()=>({wch:12})),{wch:9},{wch:8}];
+                        XLSX.utils.book_append_sheet(wb,ws,"Programação");
+                        XLSX.writeFile(wb,`Prog_Tortele_${progWeekStart}.xlsx`);
+                      }}>⬇ Exportar (Excel)</button>
+                    <button style={{...S.btnGhost, fontSize:11, padding:"6px 10px"}}
+                      onClick={()=>setProgEdits({})}>Resetar ajustes</button>
+                  </div>
                 </div>
-                <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"60vh"}}>
-                  <table style={{borderCollapse:"collapse", width:"100%", fontSize:12.5, minWidth:1300}}>
-                    <thead><tr>
-                      {th("Cod","cod")}{th("Produto","produto",{left:true})}{th("Categ.","categoria",{left:true})}
-                      {["Seg","Ter","Qua","Qui","Sex","Sáb"].map((d)=>th(`Prog ${d}`,null,{style:{background:"#264478",color:"#fff"}}))}
-                      {th("Total",null)}
-                      {DIAS.map((d)=>th(`Sug ${d}`,null,{style:{color:"#B96A1B"}}))}
-                      {th("Tot Sug",null)}
-                    </tr></thead>
+
+                {/* Tabela interativa */}
+                <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"62vh"}}>
+                  <table style={{borderCollapse:"collapse", width:"100%", fontSize:11.5, minWidth:1400}}>
+                    <thead>
+                      <tr>
+                        {th("Cód","cod")}
+                        {th("Produto","produto",{left:true})}
+                        {th("Cat.","categoria",{left:true})}
+                        {th("Líq.","liquida",{style:{background:"#2D6A4F",color:"#fff"}})}
+                        {th("Estq","estoque")}
+                        {progWeekDates.map((d,i)=>(
+                          <th key={i} style={{...S.thBase,background:"#EDF1F8",color:"#264478",padding:"4px 3px",minWidth:70,textAlign:"center"}}>
+                            {DIAS[i]}<br/>
+                            <span style={{fontWeight:400,fontSize:10}}>{fmtDM(d)}</span>
+                          </th>
+                        ))}
+                        {th("Total",null,{style:{fontWeight:700}})}
+                        {th("Saldo",null)}
+                      </tr>
+                    </thead>
                     <tbody style={S.mono}>
-                      {visRows.slice(0,400).map((r)=>(
-                        <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
-                          {td(r.cod,{style:{color:"#8A8073"}})}
-                          {td(r.produto,{left:true,style:{fontFamily:"'Inter',sans-serif",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
-                          {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:isSalgado(r.categoria)?"#B96A1B":"#6B6153"}})}
-                          {r.prog.slice(0,6).map((v,i)=>td(v==null?"—":num(v),{style:{background:"#EDF1F8",color:"#264478",fontWeight:v?600:400}}))}
-                          {td(num(r.liqDia.reduce((a,b)=>a+b,0)),{style:{fontWeight:600}})}
-                          {r.sugDia.map((v,i)=>td(v||"·",{style:{color:"#B96A1B",background:"#FDF6EC"}}))}
-                          {td(num(r.sugDia.reduce((a,b)=>a+b,0)),{style:{fontWeight:600,color:"#B96A1B"}})}
-                        </tr>
-                      ))}
+                      {visRows.slice(0,400).map((r)=>{
+                        let runEst = r.estoque || 0;
+                        const dayData = progWeekDates.map((_,di)=>{
+                          const prod = progEdits[`${r.cod}_${di}`] ?? (r.prog[di] ?? 0);
+                          const venda = Math.ceil(r.mixDia[di] * r.media);
+                          runEst = Math.round(runEst + prod - venda);
+                          return { prod, venda, estProj: runEst };
+                        });
+                        const totalProg = dayData.reduce((s,d)=>s+d.prod,0);
+                        const saldo = totalProg - r.liquida;
+                        return (
+                          <tr key={r.cod} style={{borderBottom:"2px solid #F0EBE2"}}>
+                            {td(r.cod,{style:{color:"#8A8073",fontSize:11}})}
+                            {td(r.produto,{left:true,style:{fontFamily:"'Inter',sans-serif",maxWidth:190,overflow:"hidden",textOverflow:"ellipsis"}})}
+                            {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:10,color:isSalgado(r.categoria)?BRAND.amber:BRAND.muted}})}
+                            {td(num(r.liquida),{style:{fontWeight:700,color:"#fff",background:"#2D6A4F"}})}
+                            {td(r.estoque?num(r.estoque):"·",{style:{color:"#8A8073"}})}
+                            {dayData.map((dd,di)=>{
+                              const estOk = dd.estProj >= r.es;
+                              const hasVal = dd.prod > 0;
+                              return (
+                                <td key={di} style={{padding:"3px 3px",background:di===5||di===6?"#FAFAF5":"transparent",textAlign:"center"}}>
+                                  <div style={{fontSize:9,color:"#B0A794",marginBottom:1,fontFamily:"'Inter',sans-serif"}}>↓{dd.venda||0}</div>
+                                  <input
+                                    type="number" min="0"
+                                    value={progEdits[`${r.cod}_${di}`] !== undefined ? progEdits[`${r.cod}_${di}`] : (r.prog[di] ?? "")}
+                                    onChange={(e)=>{
+                                      const v = e.target.value === "" ? undefined : Math.max(0,parseInt(e.target.value)||0);
+                                      setProgEdits(prev=>{
+                                        const n={...prev};
+                                        if(v===undefined) delete n[`${r.cod}_${di}`]; else n[`${r.cod}_${di}`]=v;
+                                        return n;
+                                      });
+                                    }}
+                                    style={{width:52,padding:"3px 2px",borderRadius:4,border:"1px solid",
+                                      borderColor:hasVal?"#264478":"#D8D0C2",
+                                      background:hasVal?"#EDF1F8":"#FAFAFA",
+                                      color:"#264478",fontWeight:600,fontSize:12,fontFamily:"'JetBrains Mono',monospace",textAlign:"center"}}
+                                  />
+                                  <div style={{fontSize:9,color:estOk?"#2D6A4F":"#C4501E",fontWeight:600,marginTop:1,fontFamily:"'Inter',sans-serif"}}>
+                                    {num(dd.estProj)}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                            <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:saldo>=0?"#2D6A4F":"#C4501E"}}>
+                              {num(totalProg)}
+                            </td>
+                            <td style={{padding:"5px 8px",textAlign:"right",fontWeight:600,fontSize:11,color:saldo>=0?"#2D6A4F":"#C4501E"}}>
+                              {saldo>=0?`+${num(saldo)}`:num(saldo)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
