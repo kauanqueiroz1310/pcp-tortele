@@ -548,6 +548,21 @@ function exportAll(result) {
   const ws3 = styledSheet([h3,...d3], [7,38,20,10,10,10,...LOJAS.map(()=>8),...LOJAS.map(()=>10),...LOJAS.map(()=>10),10,...LOJAS.map(()=>10)], "PCP por Loja");
   XLSX.utils.book_append_sheet(wb, ws3, "PCP por Loja");
 
+  // ── Envio Diário por Loja ──────────────────────────────────────────
+  const diasAbrev = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
+  const h5 = ["Cód","Produto","Categoria","Média Semanal",
+    ...LOJAS.flatMap(l => diasAbrev.map(d => `${l.slice(0,3)} ${d}`))];
+  const d5 = rows.map(r => [
+    r.cod, r.produto, r.categoria, +r.media.toFixed(1),
+    ...LOJAS.flatMap((_, li) => diasAbrev.map((__, dow) =>
+      +(r.media * r.mixLoja[li] * r.mixDia[dow]).toFixed(1)
+    )),
+  ]);
+  const ws5 = styledSheet([h5,...d5],
+    [7, 38, 20, 12, ...LOJAS.flatMap(() => diasAbrev.map(() => 9))],
+    "Envio Diário por Loja");
+  XLSX.utils.book_append_sheet(wb, ws5, "Envio Diário");
+
   // ── Programação ────────────────────────────────────────────────────
   const h2 = ["Cód","Produto","Categoria","Sugerida","Estoque","LÍQUIDA","Seg","Ter","Qua","Qui","Sex","Sáb","Dom","Total programado"];
   const d2 = rows.map((r) => [
@@ -612,7 +627,8 @@ export default function PCPTorteleWeb() {
   const [nivelServico, setNivelServico] = useState(0.9);
   const [janela, setJanela] = useState(4);
   const [dataRef, setDataRef] = useState(() => new Date().toISOString().slice(0, 10));
-  const [progEdits, setProgEdits] = useState({}); // {`${cod}_${dayIdx}`: qty} — ajustes manuais
+  const [progEdits, setProgEdits] = useState({});
+  const [progResetKey, setProgResetKey] = useState(0);
   const [progWeekStart, setProgWeekStart] = useState(() => {
     const today = new Date(); const dow = (today.getDay()+6)%7;
     return addDays(today, dow===0?0:7-dow).toISOString().slice(0,10);
@@ -809,7 +825,7 @@ export default function PCPTorteleWeb() {
     </th>
   );
   const td = (v, extra={}) => (
-    <td style={{ padding:"5px 8px", textAlign: extra.left?"left":"right", whiteSpace:"nowrap", ...extra.style }}>{v}</td>
+    <td title={extra.title} style={{ padding:"5px 8px", textAlign: extra.left?"left":"right", whiteSpace:"nowrap", ...extra.style }}>{v}</td>
   );
   const num = (v, dec=0) => v==null?"·":(+v).toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec});
 
@@ -1062,7 +1078,7 @@ export default function PCPTorteleWeb() {
                     {visRows.slice(0,400).map((r)=>(
                       <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                         {td(r.cod,{style:{color:"#8A8073"}})}
-                        {td(r.produto,{left:true,style:{fontFamily:"'Inter',sans-serif",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
+                        {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
                         {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis"}})}
                         {r.weeks.map((v,i)=>td(v?num(v):"·",{style:{color:i===7?BRAND.dark:"#8A8073",fontWeight:i===7?600:400}}))}
                         {td(r.partial?num(r.partial):"·",{style:{color:"#B0A794"}})}
@@ -1126,7 +1142,7 @@ export default function PCPTorteleWeb() {
                         XLSX.writeFile(wb,`Prog_Tortele_${progWeekStart}.xlsx`);
                       }}>⬇ Exportar (Excel)</button>
                     <button style={{...S.btnGhost, fontSize:11, padding:"6px 10px"}}
-                      onClick={()=>setProgEdits({})}>Resetar ajustes</button>
+                      onClick={()=>{ setProgEdits({}); setProgResetKey(k=>k+1); }}>Resetar ajustes</button>
                   </div>
                 </div>
 
@@ -1192,7 +1208,7 @@ export default function PCPTorteleWeb() {
                         return (
                           <tr key={r.cod} style={{borderBottom:"2px solid #F0EBE2"}}>
                             {td(r.cod,{style:{color:"#8A8073",fontSize:11}})}
-                            {td(r.produto,{left:true,style:{fontFamily:"'Inter',sans-serif",maxWidth:190,overflow:"hidden",textOverflow:"ellipsis"}})}
+                            {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",maxWidth:190,overflow:"hidden",textOverflow:"ellipsis"}})}
                             {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:10,color:isSalgado(r.categoria)?BRAND.amber:BRAND.muted}})}
                             {td(num(r.liquida),{style:{fontWeight:700,color:"#fff",background:"#2D6A4F"}})}
                             {td(r.estoque?num(r.estoque):"·",{style:{color:"#8A8073"}})}
@@ -1210,18 +1226,17 @@ export default function PCPTorteleWeb() {
                                     vnd {dd.venda||0}
                                   </div>
                                   <input
+                                    key={`${r.cod}_${dd.wKey}_${dd.dow}_r${progResetKey}`}
                                     type="number" min="0"
-                                    value={progEdits[`${r.cod}_${dd.wKey}_${dd.dow}`] !== undefined
+                                    defaultValue={progEdits[`${r.cod}_${dd.wKey}_${dd.dow}`] !== undefined
                                       ? progEdits[`${r.cod}_${dd.wKey}_${dd.dow}`]
                                       : (r.prog[dd.dow] ?? "")}
-                                    onChange={(e)=>{
-                                      const v = e.target.value === "" ? undefined : Math.max(0,parseInt(e.target.value)||0);
-                                      setProgEdits(prev=>{
-                                        const n={...prev};
-                                        const key=`${r.cod}_${dd.wKey}_${dd.dow}`;
-                                        if(v===undefined) delete n[key]; else n[key]=v;
-                                        return n;
-                                      });
+                                    onBlur={(e)=>{
+                                      const raw = e.target.value.trim();
+                                      const v = raw === "" ? 0 : Math.max(0, parseInt(raw) || 0);
+                                      const key = `${r.cod}_${dd.wKey}_${dd.dow}`;
+                                      const cur = progEdits[key] ?? (r.prog[dd.dow] ?? 0);
+                                      if (v !== cur) setProgEdits(p=>({...p,[key]:v}));
                                     }}
                                     style={{width:54,padding:"4px 2px",borderRadius:4,border:"1px solid",
                                       borderColor:hasVal?"#264478":"#D8D0C2",
@@ -1271,7 +1286,7 @@ export default function PCPTorteleWeb() {
                       return (
                         <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                           {td(r.cod,{style:{color:"#8A8073"}})}
-                          {td(r.produto,{left:true,style:{fontFamily:"'Inter',sans-serif",maxWidth:190,overflow:"hidden",textOverflow:"ellipsis"}})}
+                          {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",maxWidth:190,overflow:"hidden",textOverflow:"ellipsis"}})}
                           {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153",maxWidth:100,overflow:"hidden",textOverflow:"ellipsis"}})}
                           {td(num(r.sugerida),{style:{fontWeight:600,color:"#B96A1B"}})}
                           {td(r.estoque?num(r.estoque):"·",{style:{color:"#8A8073"}})}
@@ -1303,7 +1318,7 @@ export default function PCPTorteleWeb() {
                     {visRows.slice(0,400).map((r)=>(
                       <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                         {td(r.cod,{style:{color:"#8A8073"}})}
-                        {td(r.produto,{left:true,style:{fontFamily:"'Inter',sans-serif",maxWidth:230,overflow:"hidden",textOverflow:"ellipsis"}})}
+                        {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",maxWidth:230,overflow:"hidden",textOverflow:"ellipsis"}})}
                         {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153"}})}
                         {td(num(r.cmvQde))}
                         {td(num(r.cmvVenda,2))}
