@@ -415,7 +415,7 @@ if (typeof window !== "undefined" && !window.storage) {
   };
 }
 const CHUNK = 20000;
-async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params }) {
+async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, progEdits, progWeekStart }) {
   try {
     const flat = [];
     const fmeta = files.map((f) => ({ name: f.name, loja: f.loja, n: f.rows.length }));
@@ -430,7 +430,7 @@ async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categor
     await window.storage.set("meta", JSON.stringify({ nChunks, fmeta, savedAt: Date.now() }));
     const prodNames = {};
     for (const f of files) for (const r of f.rows) if (r.cod && r.produto) prodNames[r.cod] = r.produto;
-    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, prodNames }));
+    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, prodNames, progEdits: progEdits || {}, progWeekStart: progWeekStart || "" }));
     return true;
   } catch (e) { console.error("save", e); return false; }
 }
@@ -559,17 +559,23 @@ function exportAll(result) {
   XLSX.utils.book_append_sheet(wb, ws3, "PCP por Loja");
 
   // ── Envio Diário por Loja ──────────────────────────────────────────
+  // Totais semanais por loja calculados primeiro (para consistência)
   const diasAbrev = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
   const h5 = ["Cód","Produto","Categoria","Média Semanal",
-    ...LOJAS.flatMap(l => diasAbrev.map(d => `${l.slice(0,3)} ${d}`))];
-  const d5 = rows.map(r => [
-    r.cod, r.produto, r.categoria, +r.media.toFixed(1),
-    ...LOJAS.flatMap((_, li) => diasAbrev.map((__, dow) =>
-      +(r.media * r.mixLoja[li] * r.mixDia[dow]).toFixed(1)
-    )),
-  ]);
+    ...LOJAS.flatMap(l => diasAbrev.map(d => `${l.slice(0,3)} ${d}`)),
+    ...LOJAS.map(l => `Total ${l.slice(0,3)}`)];
+  const d5 = rows.map(r => {
+    const lojaWkTot = LOJAS.map((_, li) => Math.round(r.media * r.mixLoja[li]));
+    return [
+      r.cod, r.produto, r.categoria, Math.round(r.media),
+      ...LOJAS.flatMap((_, li) => diasAbrev.map((__, dow) =>
+        Math.round(r.media * r.mixLoja[li] * r.mixDia[dow])
+      )),
+      ...lojaWkTot,
+    ];
+  });
   const ws5 = styledSheet([h5,...d5],
-    [7, 38, 20, 12, ...LOJAS.flatMap(() => diasAbrev.map(() => 9))],
+    [7, 38, 20, 10, ...LOJAS.flatMap(() => diasAbrev.map(() => 8)), ...LOJAS.map(() => 11)],
     "Envio Diário por Loja");
   XLSX.utils.book_append_sheet(wb, ws5, "Envio Diário");
 
@@ -676,6 +682,8 @@ export default function PCPTorteleWeb() {
         }
         if (Object.keys(st.categorias || {}).length) setCatInfo(`${Object.keys(st.categorias).length} produtos (sessão anterior)`);
         if ((st.combos || []).length) setComboInfo(`${st.combos.length} linhas (sessão anterior)`);
+        if (st.progEdits && Object.keys(st.progEdits).length) setProgEdits(st.progEdits);
+        if (st.progWeekStart) setProgWeekStart(st.progWeekStart);
         setLoadedFromCache(true);
       }
     })();
@@ -816,7 +824,7 @@ export default function PCPTorteleWeb() {
   const doSave = async () => {
     setSaveStatus("salvando…");
     const ok = await saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos,
-      params: { nivelServico, janela, dataRef, usarCombos } });
+      params: { nivelServico, janela, dataRef, usarCombos }, progEdits, progWeekStart });
     setSaveStatus(ok ? "✓ salvo" : "falha ao salvar");
     setTimeout(()=>setSaveStatus(""), 3000);
   };
