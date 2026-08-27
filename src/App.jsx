@@ -421,7 +421,9 @@ async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categor
       await window.storage.set(`sales:${i}`, JSON.stringify(flat.slice(i*CHUNK,(i+1)*CHUNK)));
     }
     await window.storage.set("meta", JSON.stringify({ nChunks, fmeta, savedAt: Date.now() }));
-    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params }));
+    const prodNames = {};
+    for (const f of files) for (const r of f.rows) if (r.cod && r.produto) prodNames[r.cod] = r.produto;
+    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, prodNames }));
     return true;
   } catch (e) { console.error("save", e); return false; }
 }
@@ -437,10 +439,11 @@ async function loadState() {
     }
     const auxR = await window.storage.get("aux");
     const aux = auxR ? JSON.parse(auxR.value) : {};
+    const prodNames = aux.prodNames || {};
     const byLoja = {};
     for (const [d, cod, qde, li, vendido, custo] of flat) {
       const loja = LOJAS[li];
-      (byLoja[loja] ||= []).push({ dt: new Date(d*86400000), cod, produto: "", qde, vendido, custo, loja });
+      (byLoja[loja] ||= []).push({ dt: new Date(d*86400000), cod, produto: prodNames[cod] || "", qde, vendido, custo, loja });
     }
     const files = meta.fmeta.filter((f)=>f.loja).map((f)=>({ name: f.name, loja: f.loja, rows: [], warnings: [], fromCache: true }));
     // reconstruir rows por loja na ordem dos files (aproximação: agrupar por loja)
@@ -1078,7 +1081,7 @@ export default function PCPTorteleWeb() {
                     {visRows.slice(0,400).map((r)=>(
                       <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                         {td(r.cod,{style:{color:"#8A8073"}})}
-                        {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
+                        {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",minWidth:140,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis"}})}
                         {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis"}})}
                         {r.weeks.map((v,i)=>td(v?num(v):"·",{style:{color:i===7?BRAND.dark:"#8A8073",fontWeight:i===7?600:400}}))}
                         {td(r.partial?num(r.partial):"·",{style:{color:"#B0A794"}})}
@@ -1208,7 +1211,7 @@ export default function PCPTorteleWeb() {
                         return (
                           <tr key={r.cod} style={{borderBottom:"2px solid #F0EBE2"}}>
                             {td(r.cod,{style:{color:"#8A8073",fontSize:11}})}
-                            {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",maxWidth:190,overflow:"hidden",textOverflow:"ellipsis"}})}
+                            {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",minWidth:140,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
                             {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:10,color:isSalgado(r.categoria)?BRAND.amber:BRAND.muted}})}
                             {td(num(r.liquida),{style:{fontWeight:700,color:"#fff",background:"#2D6A4F"}})}
                             {td(r.estoque?num(r.estoque):"·",{style:{color:"#8A8073"}})}
@@ -1286,7 +1289,7 @@ export default function PCPTorteleWeb() {
                       return (
                         <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                           {td(r.cod,{style:{color:"#8A8073"}})}
-                          {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",maxWidth:190,overflow:"hidden",textOverflow:"ellipsis"}})}
+                          {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",minWidth:140,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
                           {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153",maxWidth:100,overflow:"hidden",textOverflow:"ellipsis"}})}
                           {td(num(r.sugerida),{style:{fontWeight:600,color:"#B96A1B"}})}
                           {td(r.estoque?num(r.estoque):"·",{style:{color:"#8A8073"}})}
@@ -1318,7 +1321,7 @@ export default function PCPTorteleWeb() {
                     {visRows.slice(0,400).map((r)=>(
                       <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                         {td(r.cod,{style:{color:"#8A8073"}})}
-                        {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",maxWidth:230,overflow:"hidden",textOverflow:"ellipsis"}})}
+                        {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",minWidth:140,maxWidth:240,overflow:"hidden",textOverflow:"ellipsis"}})}
                         {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153"}})}
                         {td(num(r.cmvQde))}
                         {td(num(r.cmvVenda,2))}
