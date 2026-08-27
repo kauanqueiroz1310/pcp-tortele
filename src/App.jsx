@@ -92,7 +92,14 @@ function parseVendas(wb) {
     const header = data[hi].map((c) => String(c || "").toLowerCase().trim());
     const iData = header.findIndex((c) => c.includes("data"));
     const iCod = header.findIndex((c) => c === "cod" || c === "cod." || c === "código" || c === "codigo");
-    const iProd = header.findIndex((c) => c.includes("produto"));
+    let iProd = header.findIndex((c) => c.includes("produto") || c.includes("descri") || c === "nome" || c === "item");
+    // Fallback: primeira coluna de texto após cod (ex: col "Produto" com outro nome)
+    if (iProd < 0 && iCod >= 0) {
+      for (let k = iCod + 1; k < header.length; k++) {
+        const h = header[k];
+        if (!h.match(/^(qde|qtd|val|cust|prec|dat|med)/)) { iProd = k; break; }
+      }
+    }
     const iQde = header.findIndex((c) => c.startsWith("qde") || c.startsWith("qtd"));
     const iVend = header.findIndex((c) => c === "vendido");
     const iCusto = header.findIndex((c) => c === "custo");
@@ -1081,7 +1088,11 @@ export default function PCPTorteleWeb() {
                     {visRows.slice(0,400).map((r)=>(
                       <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                         {td(r.cod,{style:{color:"#8A8073"}})}
-                        {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",minWidth:140,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis"}})}
+                        <td title={r.produto||`cod ${r.cod}`} style={{padding:"5px 8px",textAlign:"left",whiteSpace:"nowrap"}}>
+                          <div style={{width:210,overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'Inter',sans-serif",color:BRAND.dark}}>
+                            {r.produto||<span style={{color:"#B0A794",fontStyle:"italic"}}>cod {r.cod}</span>}
+                          </div>
+                        </td>
                         {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis"}})}
                         {r.weeks.map((v,i)=>td(v?num(v):"·",{style:{color:i===7?BRAND.dark:"#8A8073",fontWeight:i===7?600:400}}))}
                         {td(r.partial?num(r.partial):"·",{style:{color:"#B0A794"}})}
@@ -1211,7 +1222,11 @@ export default function PCPTorteleWeb() {
                         return (
                           <tr key={r.cod} style={{borderBottom:"2px solid #F0EBE2"}}>
                             {td(r.cod,{style:{color:"#8A8073",fontSize:11}})}
-                            {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",minWidth:140,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
+                            <td title={r.produto||`cod ${r.cod}`} style={{padding:"5px 8px",textAlign:"left",whiteSpace:"nowrap"}}>
+                          <div style={{width:190,overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'Inter',sans-serif",color:BRAND.dark}}>
+                            {r.produto||<span style={{color:"#B0A794",fontStyle:"italic"}}>cod {r.cod}</span>}
+                          </div>
+                        </td>
                             {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:10,color:isSalgado(r.categoria)?BRAND.amber:BRAND.muted}})}
                             {td(num(r.liquida),{style:{fontWeight:700,color:"#fff",background:"#2D6A4F"}})}
                             {td(r.estoque?num(r.estoque):"·",{style:{color:"#8A8073"}})}
@@ -1289,7 +1304,11 @@ export default function PCPTorteleWeb() {
                       return (
                         <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                           {td(r.cod,{style:{color:"#8A8073"}})}
-                          {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",minWidth:140,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}})}
+                          <td title={r.produto||`cod ${r.cod}`} style={{padding:"5px 8px",textAlign:"left",whiteSpace:"nowrap"}}>
+                          <div style={{width:190,overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'Inter',sans-serif",color:BRAND.dark}}>
+                            {r.produto||<span style={{color:"#B0A794",fontStyle:"italic"}}>cod {r.cod}</span>}
+                          </div>
+                        </td>
                           {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153",maxWidth:100,overflow:"hidden",textOverflow:"ellipsis"}})}
                           {td(num(r.sugerida),{style:{fontWeight:600,color:"#B96A1B"}})}
                           {td(r.estoque?num(r.estoque):"·",{style:{color:"#8A8073"}})}
@@ -1321,7 +1340,11 @@ export default function PCPTorteleWeb() {
                     {visRows.slice(0,400).map((r)=>(
                       <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
                         {td(r.cod,{style:{color:"#8A8073"}})}
-                        {td(r.produto,{left:true,title:r.produto,style:{fontFamily:"'Inter',sans-serif",minWidth:140,maxWidth:240,overflow:"hidden",textOverflow:"ellipsis"}})}
+                        <td title={r.produto||`cod ${r.cod}`} style={{padding:"5px 8px",textAlign:"left",whiteSpace:"nowrap"}}>
+                          <div style={{width:220,overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'Inter',sans-serif",color:BRAND.dark}}>
+                            {r.produto||<span style={{color:"#B0A794",fontStyle:"italic"}}>cod {r.cod}</span>}
+                          </div>
+                        </td>
                         {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153"}})}
                         {td(num(r.cmvQde))}
                         {td(num(r.cmvVenda,2))}
