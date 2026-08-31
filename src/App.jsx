@@ -1155,7 +1155,7 @@ export default function PCPTorteleWeb() {
               <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"64vh"}}>
                 <table style={{borderCollapse:"collapse", width:"100%", fontSize:12.5, minWidth:1750}}>
                   <thead><tr>
-                    {th("Cod","cod")}{th("Produto","produto",{left:true})}{th("Categ.","categoria",{left:true})}
+                    {th("Cod","cod")}{th("Produto","produto",{left:true})}{th("Categ.","categoria",{left:true})}{th("Setor","setor",{left:true})}
                     {result.weekStarts.map((w)=>th(fmtDM(w),null))}
                     {th("Parc.",null)}{th("Combo","combo")}
                     {th("Méd","media")}{th("DP","dp")}{th("CV","cv")}{th("Mín","min")}{th("Máx","max")}{th("Tend","tend")}
@@ -1175,6 +1175,15 @@ export default function PCPTorteleWeb() {
                           </div>
                         </td>
                         {td(r.categoria,{left:true,style:{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#6B6153",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis"}})}
+                        <td style={{padding:"4px 8px",whiteSpace:"nowrap"}}>
+                          {r.setor
+                            ? <span style={{fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:3,
+                                background:isSalgado(r.categoria)?"#FFF3E0":"#FCE4EC",
+                                color:isSalgado(r.categoria)?"#B96A1B":"#AD1457"}}>
+                                {r.setor}
+                              </span>
+                            : <span style={{color:"#C0B9B0",fontSize:11}}>—</span>}
+                        </td>
                         {r.weeks.map((v,i)=>td(v?num(v):"·",{style:{color:i===7?BRAND.dark:"#8A8073",fontWeight:i===7?600:400}}))}
                         {td(r.partial?num(r.partial):"·",{style:{color:"#B0A794"}})}
                         {td(r.combo?num(r.combo,1):"·",{style:{background:r.combo?"#FFF3D6":"transparent"}})}
@@ -1253,7 +1262,7 @@ export default function PCPTorteleWeb() {
                         <th colSpan={7} style={{background:"#E8F0E4",color:"#2D6A4F",textAlign:"center",fontSize:11,fontWeight:700,padding:"4px 3px",borderLeft:"3px solid #B96A1B",borderBottom:"2px solid #2D6A4F",position:"sticky",top:0,zIndex:2}}>
                           Semana 2 · {fmtDM(progWeekDates[7])} – {fmtDM(progWeekDates[13])}
                         </th>
-                        <th colSpan={2} style={{...S.thBase,background:"#fff",borderBottom:"none"}} />
+                        <th colSpan={3} style={{...S.thBase,background:"#fff",borderBottom:"none"}} />
                       </tr>
                       <tr>
                         {th("Cód","cod")}
@@ -1273,6 +1282,7 @@ export default function PCPTorteleWeb() {
                         ))}
                         {th("Total",null,{style:{fontWeight:700}})}
                         {th("Saldo 2sem",null)}
+                        {th("",null,{style:{width:38}})}
                       </tr>
                     </thead>
                     <tbody style={S.mono}>
@@ -1354,6 +1364,26 @@ export default function PCPTorteleWeb() {
                             </td>
                             <td style={{padding:"5px 8px",textAlign:"right",fontWeight:600,fontSize:11,color:saldo>=0?"#2D6A4F":"#C4501E"}}>
                               {saldo>=0?`+${num(saldo)}`:num(saldo)}
+                            </td>
+                            <td style={{padding:"3px 6px",textAlign:"center"}}>
+                              <button
+                                title="Zerar produção desta linha nas 2 semanas"
+                                onClick={()=>{
+                                  const next = {...progEdits};
+                                  progWeekDates.forEach((_,di)=>{
+                                    const wk = Math.floor(di/7);
+                                    const dow = di%7;
+                                    const wKey = addDays(new Date(progWeekStart+"T12:00:00"),wk*7).toISOString().slice(0,10);
+                                    next[`${r.cod}_${wKey}_${dow}`] = 0;
+                                  });
+                                  setProgEdits(next);
+                                  setProgResetKey(k=>k+1);
+                                }}
+                                style={{border:"1px solid #E4DDD2",background:"#FFF8F5",color:"#C4501E",
+                                  borderRadius:4,padding:"2px 6px",fontSize:11,cursor:"pointer",
+                                  fontWeight:700,fontFamily:"'JetBrains Mono',monospace",lineHeight:1.4}}>
+                                ×0
+                              </button>
                             </td>
                           </tr>
                         );
