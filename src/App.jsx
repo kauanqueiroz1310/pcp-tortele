@@ -649,14 +649,15 @@ const S = {
   thBase: { padding: "7px 8px", fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: "uppercase", letterSpacing: "0.03em", borderBottom: "2px solid #E4DDD2", whiteSpace: "nowrap", position: "sticky", top: 0, background: "#fff", zIndex: 2 },
 };
 
-function CheckboxDrop({ label, options, selected, setSelected, open, setOpen }) {
+function CheckboxDrop({ label, options, selected, setSelected }) {
+  const [open, setOpen] = React.useState(false);
   const ref = React.useRef(null);
   React.useEffect(() => {
     if (!open) return;
     const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [open, setOpen]);
+  }, [open]);
   const toggle = (v) => setSelected(prev => {
     const next = new Set(prev);
     next.has(v) ? next.delete(v) : next.add(v);
@@ -723,9 +724,7 @@ export default function PCPTorteleWeb() {
   const [filtABCs, setFiltABCs] = useState(new Set());
   const [filtCats, setFiltCats] = useState(new Set());
   const [filtSetores, setFiltSetores] = useState(new Set());
-  const [openFiltCat, setOpenFiltCat] = useState(false);
-  const [openFiltABC, setOpenFiltABC] = useState(false);
-  const [openFiltSetor, setOpenFiltSetor] = useState(false);
+  const [rowResetKeys, setRowResetKeys] = useState({});
   const [soAlertas, setSoAlertas] = useState(false);
   const [sortKey, setSortKey] = useState("vol4");
   const [sortDesc, setSortDesc] = useState(true);
@@ -1130,13 +1129,10 @@ export default function PCPTorteleWeb() {
               <input placeholder="Buscar código ou produto…" value={busca} onChange={(e)=>setBusca(e.target.value)}
                 style={{padding:"8px 12px", borderRadius:8, border:"1px solid #D8D0C2", width:220, fontSize:13}}/>
               {setores.length > 0 && (
-                <CheckboxDrop label="Setor" options={setores} selected={filtSetores} setSelected={setFiltSetores}
-                  open={openFiltSetor} setOpen={setOpenFiltSetor} />
+                <CheckboxDrop label="Setor" options={setores} selected={filtSetores} setSelected={setFiltSetores} />
               )}
-              <CheckboxDrop label="Categoria" options={cats} selected={filtCats} setSelected={setFiltCats}
-                open={openFiltCat} setOpen={setOpenFiltCat} />
-              <CheckboxDrop label="ABC" options={["A","B","C"]} selected={filtABCs} setSelected={setFiltABCs}
-                open={openFiltABC} setOpen={setOpenFiltABC} />
+              <CheckboxDrop label="Categoria" options={cats} selected={filtCats} setSelected={setFiltCats} />
+              <CheckboxDrop label="ABC" options={["A","B","C"]} selected={filtABCs} setSelected={setFiltABCs} />
               <label style={{fontSize:13, display:"flex", gap:6, alignItems:"center", cursor:"pointer"}}>
                 <input type="checkbox" checked={soAlertas} onChange={(e)=>setSoAlertas(e.target.checked)}/>Só com alerta
               </label>
@@ -1246,7 +1242,20 @@ export default function PCPTorteleWeb() {
                         XLSX.writeFile(wb,`Prog_Tortele_${progWeekStart}.xlsx`);
                       }}>⬇ Exportar (Excel)</button>
                     <button style={{...S.btnGhost, fontSize:11, padding:"6px 10px"}}
-                      onClick={()=>{ setProgEdits({}); setProgResetKey(k=>k+1); }}>Resetar ajustes</button>
+                      onClick={()=>{ setProgEdits({}); setRowResetKeys({}); setProgResetKey(k=>k+1); }}>Resetar ajustes</button>
+                    <button style={{...S.btnGhost, fontSize:11, padding:"6px 10px", color:"#C4501E", borderColor:"#E8C8C0"}}
+                      onClick={()=>{
+                        const wk0 = addDays(new Date(progWeekStart+"T12:00:00"), 0).toISOString().slice(0,10);
+                        const wk1 = addDays(new Date(progWeekStart+"T12:00:00"), 7).toISOString().slice(0,10);
+                        const next = {...progEdits};
+                        for (const r of visRows) {
+                          for (const wKey of [wk0, wk1]) {
+                            for (let dow=0; dow<7; dow++) next[`${r.cod}_${wKey}_${dow}`] = 0;
+                          }
+                        }
+                        setProgEdits(next);
+                        setProgResetKey(k=>k+1);
+                      }}>Zerar todos</button>
                   </div>
                 </div>
 
@@ -1286,13 +1295,18 @@ export default function PCPTorteleWeb() {
                       </tr>
                     </thead>
                     <tbody style={S.mono}>
-                      {visRows.slice(0,400).map((r)=>{
-                        // Projeta estoque inicial para a semana selecionada
-                        const partialTs = result.partialWeekStart.getTime();
-                        const selTs = new Date(progWeekStart + "T12:00:00").getTime();
-                        const weeksDiff = Math.max(0, Math.round((selTs - partialTs) / (7 * 86400000)));
+                      {(() => {
+                        // Constantes computadas UMA VEZ fora do loop de 400 linhas
+                        const _partialTs = result.partialWeekStart.getTime();
+                        const _selTs = new Date(progWeekStart + "T12:00:00").getTime();
+                        const _weeksDiff = Math.max(0, Math.round((_selTs - _partialTs) / (7 * 86400000)));
+                        // Apenas 2 wKeys distintos (semana 1 e semana 2)
+                        const progWKeys = [0, 7].map(off =>
+                          addDays(new Date(progWeekStart + "T12:00:00"), off).toISOString().slice(0, 10)
+                        );
+                        return visRows.slice(0,400).map((r)=>{
                         let startEst = r.estoque || 0;
-                        for (let w = 0; w < weeksDiff; w++) {
+                        for (let w = 0; w < _weeksDiff; w++) {
                           const wKey = addDays(result.partialWeekStart, w * 7).toISOString().slice(0, 10);
                           let weekProd = 0;
                           for (let di = 0; di < 7; di++) weekProd += progEdits[`${r.cod}_${wKey}_${di}`] ?? (r.prog[di] ?? 0);
@@ -1302,7 +1316,7 @@ export default function PCPTorteleWeb() {
                         const dayData = progWeekDates.map((d, di)=>{
                           const wk = Math.floor(di / 7);
                           const dow = di % 7;
-                          const wKey = addDays(new Date(progWeekStart+"T12:00:00"), wk*7).toISOString().slice(0,10);
+                          const wKey = progWKeys[wk];
                           const prod = progEdits[`${r.cod}_${wKey}_${dow}`] ?? (r.prog[dow] ?? 0);
                           const venda = Math.ceil(r.mixDia[dow] * r.media);
                           runEst = Math.round(runEst + prod - venda);
@@ -1335,7 +1349,7 @@ export default function PCPTorteleWeb() {
                                     vnd {dd.venda||0}
                                   </div>
                                   <input
-                                    key={`${r.cod}_${dd.wKey}_${dd.dow}_r${progResetKey}`}
+                                    key={`${r.cod}_${dd.wKey}_${dd.dow}_r${rowResetKeys[r.cod]||0}_g${progResetKey}`}
                                     type="number" min="0"
                                     defaultValue={progEdits[`${r.cod}_${dd.wKey}_${dd.dow}`] !== undefined
                                       ? progEdits[`${r.cod}_${dd.wKey}_${dd.dow}`]
@@ -1370,14 +1384,12 @@ export default function PCPTorteleWeb() {
                                 title="Zerar produção desta linha nas 2 semanas"
                                 onClick={()=>{
                                   const next = {...progEdits};
-                                  progWeekDates.forEach((_,di)=>{
-                                    const wk = Math.floor(di/7);
-                                    const dow = di%7;
-                                    const wKey = addDays(new Date(progWeekStart+"T12:00:00"),wk*7).toISOString().slice(0,10);
-                                    next[`${r.cod}_${wKey}_${dow}`] = 0;
+                                  progWKeys.forEach((wKey)=>{
+                                    for (let dow=0; dow<7; dow++) next[`${r.cod}_${wKey}_${dow}`] = 0;
                                   });
                                   setProgEdits(next);
-                                  setProgResetKey(k=>k+1);
+                                  // apenas os 14 inputs desta linha remontam
+                                  setRowResetKeys(p=>({...p,[r.cod]:(p[r.cod]||0)+1}));
                                 }}
                                 style={{border:"1px solid #E4DDD2",background:"#FFF8F5",color:"#C4501E",
                                   borderRadius:4,padding:"2px 6px",fontSize:11,cursor:"pointer",
@@ -1387,7 +1399,7 @@ export default function PCPTorteleWeb() {
                             </td>
                           </tr>
                         );
-                      })}
+                      }); })()}
                     </tbody>
                   </table>
                 </div>
