@@ -265,19 +265,24 @@ function parseCategorias(wb) {
   const map = {};
   for (const name of wb.SheetNames) {
     const data = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
-    let hi = -1, iCod = -1, iCat = -1;
+    let hi = -1, iCod = -1, iCat = -1, iSetor = -1;
     for (let i = 0; i < Math.min(data.length, 10); i++) {
       const r = (data[i] || []).map((c) => String(c || "").toLowerCase().trim());
       const ic = r.findIndex((c) => c === "código" || c === "codigo" || c === "cod");
       const ik = r.findIndex((c) => c === "categoria");
-      if (ic >= 0 && ik >= 0) { hi = i; iCod = ic; iCat = ik; break; }
+      if (ic >= 0 && ik >= 0) {
+        hi = i; iCod = ic; iCat = ik;
+        iSetor = r.findIndex((c) => c === "setor");
+        break;
+      }
     }
     if (hi < 0) continue;
     for (let i = hi + 1; i < data.length; i++) {
       const r = data[i] || [];
       const cod = parseInt(r[iCod], 10);
       const cat = String(r[iCat] || "").trim();
-      if (cod && !isNaN(cod) && cat) map[cod] = cat;
+      const setor = iSetor >= 0 ? String(r[iSetor] || "").trim() : "";
+      if (cod && !isNaN(cod) && cat) map[cod] = { cat, setor };
     }
     if (Object.keys(map).length) break;
   }
@@ -371,7 +376,9 @@ function computeAll(sales, params, estoqueLoja, categorias, combos) {
     const ultima = weeks[7];
     const tend = media > 0 ? (ultima - media) / media : 0;
     const semVenda = weeks.filter((v)=>v>0).length;
-    const categoria = categorias[cod] || "S/CAT";
+    const catObj = categorias[cod];
+    const categoria = typeof catObj === "string" ? catObj : (catObj?.cat || "S/CAT");
+    const setor = typeof catObj === "string" ? "" : (catObj?.setor || "");
 
     const lojaTot = LOJAS.reduce((a,l)=>a+(byPL[cod]?.[l]||0),0);
     const mixLoja = LOJAS.map((l)=> lojaTot>0 ? (byPL[cod]?.[l]||0)/lojaTot : 0);
@@ -402,7 +409,7 @@ function computeAll(sales, params, estoqueLoja, categorias, combos) {
     const cm = cmv[cod];
     const cmvPct = cm.venda > 0 ? cm.custo / cm.venda : (cm.custo > 0 ? null : 0);
 
-    return { cod, produto: names[cod], categoria, weeks, partial, combo, media, dp, cv, min, max,
+    return { cod, produto: names[cod], categoria, setor, weeks, partial, combo, media, dp, cv, min, max,
       tend, es, margem, sugerida, estoque, estoquePorLocal, liquida, mixLoja, sugLoja, estPorLoja,
       liqLoja, mixDia, liqDia, sugDia, prog, alertas,
       cmvQde: cm.qde, cmvVenda: cm.venda, cmvCusto: cm.custo,
@@ -642,6 +649,54 @@ const S = {
   thBase: { padding: "7px 8px", fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: "uppercase", letterSpacing: "0.03em", borderBottom: "2px solid #E4DDD2", whiteSpace: "nowrap", position: "sticky", top: 0, background: "#fff", zIndex: 2 },
 };
 
+function CheckboxDrop({ label, options, selected, setSelected, open, setOpen }) {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, setOpen]);
+  const toggle = (v) => setSelected(prev => {
+    const next = new Set(prev);
+    next.has(v) ? next.delete(v) : next.add(v);
+    return next;
+  });
+  const count = selected.size;
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      <button onClick={() => setOpen(p => !p)} style={{
+        padding:"7px 12px", borderRadius:8, border:"1px solid #D8D0C2",
+        background: count ? BRAND.amber : "#fff", color: count ? "#fff" : BRAND.dark,
+        fontSize:13, cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontWeight: count ? 600 : 400,
+      }}>
+        {label}{count ? ` (${count})` : ""} <span style={{fontSize:10}}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 4px)", left:0, zIndex:200,
+          background:"#fff", border:"1px solid #D8D0C2", borderRadius:10,
+          boxShadow:"0 4px 16px rgba(0,0,0,0.12)", padding:"6px 0", minWidth:180, maxHeight:280, overflowY:"auto",
+        }}>
+          {count > 0 && (
+            <button onClick={() => setSelected(new Set())} style={{
+              width:"100%", textAlign:"left", padding:"5px 14px", background:"none", border:"none",
+              fontSize:12, color:BRAND.amber, cursor:"pointer", borderBottom:"1px solid #EEE9E2", marginBottom:4,
+            }}>Limpar filtro</button>
+          )}
+          {options.map(opt => (
+            <label key={opt} style={{display:"flex", alignItems:"center", gap:8, padding:"5px 14px", cursor:"pointer", fontSize:13, color:BRAND.dark}}>
+              <input type="checkbox" checked={selected.has(opt)} onChange={() => toggle(opt)}
+                style={{width:14, height:14, accentColor:BRAND.amber, cursor:"pointer"}} />
+              {opt}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PCPTorteleWeb() {
   const [tab, setTab] = useState("pcp");
   const [files, setFiles] = useState([]);
@@ -665,8 +720,12 @@ export default function PCPTorteleWeb() {
   const refEstArq = useRef(null);
 
   const [busca, setBusca] = useState("");
-  const [filtroABC, setFiltroABC] = useState("");
-  const [filtroCat, setFiltroCat] = useState("");
+  const [filtABCs, setFiltABCs] = useState(new Set());
+  const [filtCats, setFiltCats] = useState(new Set());
+  const [filtSetores, setFiltSetores] = useState(new Set());
+  const [openFiltCat, setOpenFiltCat] = useState(false);
+  const [openFiltABC, setOpenFiltABC] = useState(false);
+  const [openFiltSetor, setOpenFiltSetor] = useState(false);
   const [soAlertas, setSoAlertas] = useState(false);
   const [sortKey, setSortKey] = useState("vol4");
   const [sortDesc, setSortDesc] = useState(true);
@@ -812,19 +871,21 @@ export default function PCPTorteleWeb() {
   }, [progWeekStart]);
 
   const cats = useMemo(() => result ? [...new Set(result.rows.map((r)=>r.categoria))].sort() : [], [result]);
+  const setores = useMemo(() => result ? [...new Set(result.rows.map((r)=>r.setor).filter(Boolean))].sort() : [], [result]);
 
   const visRows = useMemo(() => {
     if (!result) return [];
     let r = result.rows;
     if (busca) { const b = busca.toLowerCase(); r = r.filter((x)=>String(x.cod).includes(b)||x.produto.toLowerCase().includes(b)); }
-    if (filtroABC) r = r.filter((x)=>x.abc===filtroABC);
-    if (filtroCat) r = r.filter((x)=>x.categoria===filtroCat);
+    if (filtABCs.size) r = r.filter((x)=>filtABCs.has(x.abc));
+    if (filtCats.size) r = r.filter((x)=>filtCats.has(x.categoria));
+    if (filtSetores.size) r = r.filter((x)=>filtSetores.has(x.setor));
     if (soAlertas) r = r.filter((x)=>x.alertas.length>0);
     r = [...r].sort((a,b)=>{ const va=a[sortKey]??0, vb=b[sortKey]??0;
       if (typeof va==="string") return sortDesc?vb.localeCompare(va):va.localeCompare(vb);
       return sortDesc?vb-va:va-vb; });
     return r;
-  }, [result, busca, filtroABC, filtroCat, soAlertas, sortKey, sortDesc]);
+  }, [result, busca, filtABCs, filtCats, filtSetores, soAlertas, sortKey, sortDesc]);
 
   const totais = useMemo(() => result ? {
     produtos: result.rows.length,
@@ -1067,16 +1128,15 @@ export default function PCPTorteleWeb() {
             {/* FILTROS */}
             <div style={{ ...S.panel, borderRadius:"0 0 10px 10px", borderTop:"none", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
               <input placeholder="Buscar código ou produto…" value={busca} onChange={(e)=>setBusca(e.target.value)}
-                style={{padding:"8px 12px", borderRadius:8, border:"1px solid #D8D0C2", width:240, fontSize:13}}/>
-              <select value={filtroCat} onChange={(e)=>setFiltroCat(e.target.value)}
-                style={{padding:"8px 10px", borderRadius:8, border:"1px solid #D8D0C2", fontSize:13, maxWidth:200}}>
-                <option value="">Categoria: todas</option>
-                {cats.map((c)=><option key={c} value={c}>{c}</option>)}
-              </select>
-              <select value={filtroABC} onChange={(e)=>setFiltroABC(e.target.value)}
-                style={{padding:"8px 10px", borderRadius:8, border:"1px solid #D8D0C2", fontSize:13}}>
-                <option value="">ABC: todos</option><option value="A">A</option><option value="B">B</option><option value="C">C</option>
-              </select>
+                style={{padding:"8px 12px", borderRadius:8, border:"1px solid #D8D0C2", width:220, fontSize:13}}/>
+              {setores.length > 0 && (
+                <CheckboxDrop label="Setor" options={setores} selected={filtSetores} setSelected={setFiltSetores}
+                  open={openFiltSetor} setOpen={setOpenFiltSetor} />
+              )}
+              <CheckboxDrop label="Categoria" options={cats} selected={filtCats} setSelected={setFiltCats}
+                open={openFiltCat} setOpen={setOpenFiltCat} />
+              <CheckboxDrop label="ABC" options={["A","B","C"]} selected={filtABCs} setSelected={setFiltABCs}
+                open={openFiltABC} setOpen={setOpenFiltABC} />
               <label style={{fontSize:13, display:"flex", gap:6, alignItems:"center", cursor:"pointer"}}>
                 <input type="checkbox" checked={soAlertas} onChange={(e)=>setSoAlertas(e.target.checked)}/>Só com alerta
               </label>

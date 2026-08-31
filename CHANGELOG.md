@@ -1,5 +1,14 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 31/08/2026 — v1.14 — Setor no modelo de categorias + Filtros em checkbox
+
+### Novidades
+- **Coluna Setor no modelo de categorias**: a planilha `Modelo_Categorias.xlsx` agora tem uma quarta coluna "Setor". O sistema lê o setor de cada produto e permite filtrar por ele. Setores já vêm pré-preenchidos (Salgados, Doces, Bebidas, Combos, Insumos, Materiais, Administrativo) — basta ajustar e re-subir o arquivo.
+- **Filtros em checkbox**: os filtros de Setor, Categoria e ABC nas quatro abas deixaram de ser listas drop-down de seleção única e passaram a ser menus de checkbox — selecione múltiplos valores ao mesmo tempo. Botão "Limpar filtro" aparece quando há seleção ativa.
+- **Setor como filtro independente**: o filtro de Setor só aparece quando a base de categorias carregada tiver a coluna Setor preenchida.
+
+---
+
 ## 27/08/2026 — v1.13 — Correção: Envio Diário agora usa Sugerida como base
 
 ### Correção
