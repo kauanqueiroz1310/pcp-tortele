@@ -313,6 +313,27 @@ function parseCombos(wb) {
   return list;
 }
 
+function parseFichasTecnicas(wb) {
+  const ft = {}, sf = {};
+  const parseSheet = (sheetName, target) => {
+    const sh = wb.Sheets[sheetName];
+    if (!sh) return;
+    const data = XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, defval: null });
+    for (let i = 1; i < data.length; i++) {
+      const r = data[i] || [];
+      const cod = +r[0], codInsumo = +r[2];
+      const nome = String(r[3] || "").trim();
+      const quant = parseFloat(r[4]);
+      if (!cod || isNaN(cod) || !codInsumo || isNaN(codInsumo) || isNaN(quant) || quant <= 0) continue;
+      (target[cod] ||= []).push({ codInsumo, nome, quant });
+    }
+  };
+  parseSheet("Ficha Técnica", ft);
+  parseSheet("Subfichas", sf);
+  const sfCodes = new Set(Object.keys(sf).map(Number));
+  return { ft, sf, sfCodes };
+}
+
 /* ---------------- cálculo ---------------- */
 function computeAll(sales, params, estoqueLoja, categorias, combos) {
   const { nivelServico, janela, dataRef, usarCombos } = params;
@@ -709,6 +730,8 @@ export default function PCPTorteleWeb() {
   const [combos, setCombos] = useState([]);
   const [comboInfo, setComboInfo] = useState(null);
   const [usarCombos, setUsarCombos] = useState(true);
+  const [fichasTec, setFichasTec] = useState(null);
+  const [ftInfo, setFtInfo] = useState(null);
   const [nivelServico, setNivelServico] = useState(0.9);
   const [janela, setJanela] = useState(4);
   const [dataRef, setDataRef] = useState(() => new Date().toISOString().slice(0, 10));
@@ -732,7 +755,7 @@ export default function PCPTorteleWeb() {
   const [erro, setErro] = useState(null);
   const [saveStatus, setSaveStatus] = useState("");
   const [loadedFromCache, setLoadedFromCache] = useState(false);
-  const refVendas = useRef(null), refEst = useRef(null), refCat = useRef(null), refCombo = useRef(null);
+  const refVendas = useRef(null), refEst = useRef(null), refCat = useRef(null), refCombo = useRef(null), refFT = useRef(null);
 
   /* carregar da sessão anterior */
   useEffect(() => {
@@ -828,6 +851,18 @@ export default function PCPTorteleWeb() {
     } catch (e) { setErro(`Combos: ${e.message}`); }
   }, []);
 
+  const handleFT = useCallback(async (fl) => {
+    const f = fl[0]; if (!f) return;
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+      const data = parseFichasTecnicas(wb);
+      const nFT = Object.keys(data.ft).length;
+      const nSF = data.sfCodes.size;
+      if (!nFT && !nSF) { setErro("Fichas Técnicas: nenhuma ficha reconhecida. Verifique se as abas se chamam 'Ficha Técnica' e 'Subfichas'."); return; }
+      setFichasTec(data); setFtInfo(`${f.name} — ${nFT} produtos, ${nSF} subprodutos`);
+    } catch (e) { setErro(`Fichas Técnicas: ${e.message}`); }
+  }, []);
+
   const allSales = useMemo(() => {
     const out = [];
     for (const f of files) if (f.loja) for (const r of f.rows) out.push(r.loja ? r : { ...r, loja: f.loja });
@@ -894,6 +929,44 @@ export default function PCPTorteleWeb() {
     alertas: result.rows.filter((r)=>r.alertas.length).length,
   } : null, [result]);
 
+  const subprodData = useMemo(() => {
+    if (!result || !fichasTec) return null;
+    const map = {};
+    for (const r of result.rows) {
+      if (!r.liquida) continue;
+      for (const e of (fichasTec.ft[r.cod] || [])) {
+        if (!fichasTec.sfCodes.has(e.codInsumo)) continue;
+        if (!map[e.codInsumo]) map[e.codInsumo] = { nome: e.nome, total: 0, prods: [] };
+        map[e.codInsumo].total += e.quant * r.liquida;
+        map[e.codInsumo].prods.push(r.produto || `cod ${r.cod}`);
+      }
+    }
+    return Object.entries(map).map(([cod, d]) => ({ cod: +cod, nome: d.nome, total: d.total, prods: d.prods }))
+      .sort((a, b) => b.total - a.total);
+  }, [result, fichasTec]);
+
+  const comprasData = useMemo(() => {
+    if (!result || !fichasTec) return null;
+    const map = {};
+    const add = (codInsumo, nome, qty) => {
+      if (!map[codInsumo]) map[codInsumo] = { nome, total: 0 };
+      map[codInsumo].total += qty;
+    };
+    for (const r of result.rows) {
+      if (!r.liquida) continue;
+      for (const e of (fichasTec.ft[r.cod] || [])) {
+        if (fichasTec.sfCodes.has(e.codInsumo)) {
+          for (const se of (fichasTec.sf[e.codInsumo] || []))
+            add(se.codInsumo, se.nome, e.quant * se.quant * r.liquida);
+        } else {
+          add(e.codInsumo, e.nome, e.quant * r.liquida);
+        }
+      }
+    }
+    return Object.entries(map).map(([cod, d]) => ({ cod: +cod, nome: d.nome, total: d.total }))
+      .sort((a, b) => b.total - a.total);
+  }, [result, fichasTec]);
+
   const doSave = async () => {
     setSaveStatus("salvando…");
     const ok = await saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos,
@@ -959,7 +1032,7 @@ export default function PCPTorteleWeb() {
         )}
 
         {/* CADASTROS / UPLOADS */}
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", gap:12 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr", gap:12 }}>
           <div style={S.panel}>
             <div style={{ marginBottom:10 }}><span style={S.tag(BRAND.dark,BRAND.cream)}>1</span><b> Bases de vendas</b></div>
             <div onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{e.preventDefault();handleVendas(e.dataTransfer.files);}}
@@ -1051,6 +1124,9 @@ export default function PCPTorteleWeb() {
             { n:"4", t:"Combos", info: comboInfo, ref: refCombo, handler: handleCombo,
               desc:"Suba a AUX COMBOS (Cod Combo | Nome | Cod Componente | Nome | Qde).",
               clear: ()=>{setCombos([]);setComboInfo(null);} },
+            { n:"5", t:"Fichas Técnicas", info: ftInfo, ref: refFT, handler: handleFT,
+              desc:"Suba a planilha de fichas técnicas (abas: Ficha Técnica e Subfichas). Habilita as abas Subprodutos e Sugestão de Compras.",
+              clear: ()=>{setFichasTec(null);setFtInfo(null);} },
           ].map((b)=>(
             <div key={b.n} style={S.panel}>
               <div style={{ marginBottom:8 }}><span style={S.tag(BRAND.dark,BRAND.cream)}>{b.n}</span><b> {b.t}</b></div>
@@ -1119,7 +1195,9 @@ export default function PCPTorteleWeb() {
 
             {/* TABS */}
             <div style={{ display:"flex", gap:2, borderBottom:`2px solid ${BRAND.dark}` }}>
-              {[["pcp","PCP Semanal"],["prog","Programação"],["loja","PCP por Loja"],["cmv","Auditoria CMV"]].map(([k,l])=>(
+              {[["pcp","PCP Semanal"],["prog","Programação"],["loja","PCP por Loja"],["cmv","Auditoria CMV"],
+                ...(fichasTec?[["sub","Subprodutos"],["compras","Sugestão de Compras"]]:[])]
+                .map(([k,l])=>(
                 <button key={k} style={S.tabBtn(tab===k)} onClick={()=>setTab(k)}>{l}</button>
               ))}
             </div>
@@ -1223,24 +1301,87 @@ export default function PCPTorteleWeb() {
                     </span>
                     <button style={{...S.btn, fontSize:12, padding:"7px 14px"}}
                       onClick={()=>{
-                        const wb = XLSX.utils.book_new();
-                        const hdr = ["Cód","Produto","Categoria","Setor","Est. Atual","ES","Líquida (sem)",
-                          ...progWeekDates.map(d=>fmtDM(d)+" "+DIAS[(d.getDay()+6)%7]),"Total 2 sem","Saldo"];
+                        const wk0 = addDays(new Date(progWeekStart+"T12:00:00"), 0).toISOString().slice(0,10);
+                        const wk1 = addDays(new Date(progWeekStart+"T12:00:00"), 7).toISOString().slice(0,10);
+                        const hdr = ["Cód","Produto","Categoria","Setor","Est. Atual","ES","Líq/sem",
+                          ...progWeekDates.map(d=>fmtDM(d)+" "+DIAS[(d.getDay()+6)%7]),"Total 2sem","Saldo"];
                         const body = visRows.slice(0,400).map(r=>{
-                          const vals = progWeekDates.map((d, di)=>{
-                            const wk = Math.floor(di/7);
-                            const dow = di%7;
-                            const wKey = addDays(new Date(progWeekStart+"T12:00:00"), wk*7).toISOString().slice(0,10);
-                            return progEdits[`${r.cod}_${wKey}_${dow}`]??(r.prog[dow]??0);
+                          const vals = progWeekDates.map((_,di)=>{
+                            const wk = Math.floor(di/7); const dow = di%7;
+                            return progEdits[`${r.cod}_${wk===0?wk0:wk1}_${dow}`]??(r.prog[dow]??0);
                           });
                           const tot = vals.reduce((s,v)=>s+v,0);
                           return [r.cod,r.produto,r.categoria,r.setor??"-",r.estoque,Math.ceil(r.es),r.liquida,...vals,tot,tot-r.liquida*2];
                         });
-                        const ws = XLSX.utils.aoa_to_sheet([hdr,...body]);
-                        ws["!cols"]=[{wch:7},{wch:36},{wch:18},{wch:10},{wch:10},{wch:8},{wch:10},...progWeekDates.map(()=>({wch:12})),{wch:10},{wch:8}];
-                        XLSX.utils.book_append_sheet(wb,ws,"Programação");
-                        XLSX.writeFile(wb,`Prog_Tortele_${progWeekStart}.xlsx`);
-                      }}>⬇ Exportar (Excel)</button>
+                        const wb2 = XLSX.utils.book_new();
+                        const ws = styledSheet([hdr,...body],
+                          [7,36,16,8,9,7,9,...progWeekDates.map(()=>10),10,9],
+                          `Programação ${progWeekStart}`);
+                        ws["!freeze"] = {xSplit:4, ySplit:2};
+                        // colorir colunas dos dias
+                        const NF = 7;
+                        for (let row = 2; row < body.length+2; row++) {
+                          const alt = row%2===0;
+                          const liqC = ws[XLSX.utils.encode_cell({r:row,c:6})];
+                          if (liqC) liqC.s = {...XS.num(alt), font:{bold:true,color:{rgb:"2D6A4F"}}};
+                          for (let col=NF; col<NF+14; col++) {
+                            const cell = ws[XLSX.utils.encode_cell({r:row,c:col})];
+                            if (!cell) continue;
+                            const wk = Math.floor((col-NF)/7);
+                            if (!cell.v) { cell.s = {...(alt?XS.rowA:XS.rowB), alignment:{horizontal:"center",vertical:"center"}}; continue; }
+                            cell.s = wk===0
+                              ? {fill:{patternType:"solid",fgColor:{rgb:"EDF1F8"}},font:{bold:true,color:{rgb:"264478"}},alignment:{horizontal:"center",vertical:"center"},numFmt:"#,##0"}
+                              : {fill:{patternType:"solid",fgColor:{rgb:"E8F0E4"}},font:{bold:true,color:{rgb:"2D6A4F"}},alignment:{horizontal:"center",vertical:"center"},numFmt:"#,##0"};
+                          }
+                          const sC = ws[XLSX.utils.encode_cell({r:row,c:NF+15})];
+                          if (sC && typeof sC.v==="number") sC.s = {...XS.num(alt), font:{bold:true,color:{rgb:sC.v>=0?"2D6A4F":"C4501E"}}};
+                        }
+                        XLSX.utils.book_append_sheet(wb2, ws, "Programação");
+                        XLSX.writeFile(wb2, `Prog_Tortele_${progWeekStart}.xlsx`);
+                      }}>⬇ Excel</button>
+                    <button style={{...S.btnGhost, fontSize:11, padding:"6px 10px"}}
+                      onClick={()=>{
+                        const wk0 = addDays(new Date(progWeekStart+"T12:00:00"), 0).toISOString().slice(0,10);
+                        const wk1 = addDays(new Date(progWeekStart+"T12:00:00"), 7).toISOString().slice(0,10);
+                        const rows = visRows.slice(0,400);
+                        let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Programação ${progWeekStart} — Tortelê</title>
+<style>body{font-family:Arial,sans-serif;font-size:8.5px;color:#222;margin:6mm}
+h2{font-size:11px;color:#3C2008;margin:0 0 5px}
+table{border-collapse:collapse;width:100%}
+th{background:#3C2008;color:#F0DBBF;padding:3px 3px;font-size:8px;white-space:nowrap;text-align:center}
+td{border:1px solid #E4DDD2;padding:2px 3px;text-align:right;white-space:nowrap}
+.nome{text-align:left;max-width:110px;overflow:hidden}
+.s1{background:#EDF1F8;color:#264478;font-weight:700}
+.s2{background:#E8F0E4;color:#2D6A4F;font-weight:700}
+.liq{background:#2D6A4F;color:#fff;font-weight:700;text-align:right}
+.ok{color:#2D6A4F;font-weight:700}.nok{color:#C4501E;font-weight:700}
+.zero{color:#CCC}
+tr:nth-child(even) td{background:#FAFAFA}
+.s1,.s2,.liq{background-color:inherit!important}
+@page{size:landscape;margin:6mm}</style></head><body>
+<h2>Programação de Produção — Tortelê · ${progWeekStart} – ${addDays(new Date(progWeekStart+"T12:00:00"),13).toISOString().slice(0,10)}</h2>
+<table><thead><tr>
+<th>Cód</th><th>Produto</th><th>Cat</th><th>Líq/sem</th>
+${progWeekDates.map((d,i)=>`<th class="${i<7?'s1':'s2'}">${fmtDM(d)}<br/>${DIAS[i%7]}</th>`).join("")}
+<th>Total</th><th>Saldo</th></tr></thead><tbody>`;
+                        for (const r of rows) {
+                          const vals = progWeekDates.map((_,di)=>{
+                            const wk=Math.floor(di/7),dow=di%7;
+                            return progEdits[`${r.cod}_${wk===0?wk0:wk1}_${dow}`]??(r.prog[dow]??0);
+                          });
+                          const tot=vals.reduce((s,v)=>s+v,0);
+                          const saldo=tot-r.liquida*2;
+                          html+=`<tr><td style="color:#8A8073">${r.cod}</td><td class="nome">${r.produto||'-'}</td>
+<td style="text-align:left;font-size:7.5px;color:#7A6450">${r.categoria||'-'}</td>
+<td class="liq">${r.liquida.toLocaleString('pt-BR')}</td>
+${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>`).join("")}
+<td style="font-weight:700">${tot.toLocaleString('pt-BR')}</td>
+<td class="${saldo>=0?'ok':'nok'}">${saldo>=0?'+':''}${saldo.toLocaleString('pt-BR')}</td></tr>`;
+                        }
+                        html+=`</tbody></table></body></html>`;
+                        const w=window.open("","_blank");
+                        w.document.write(html); w.document.close(); w.print();
+                      }}>🖨 PDF</button>
                     <button style={{...S.btnGhost, fontSize:11, padding:"6px 10px"}}
                       onClick={()=>{ setProgEdits({}); setRowResetKeys({}); setProgResetKey(k=>k+1); }}>Resetar ajustes</button>
                     <button style={{...S.btnGhost, fontSize:11, padding:"6px 10px", color:"#C4501E", borderColor:"#E8C8C0"}}
@@ -1447,6 +1588,82 @@ export default function PCPTorteleWeb() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {/* ===== TAB: SUBPRODUTOS ===== */}
+            {tab==="sub" && fichasTec && (
+              <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"64vh"}}>
+                <div style={{padding:"12px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:12, alignItems:"center", flexWrap:"wrap"}}>
+                  <div style={{fontSize:12, color:"#6B6153", flex:1}}>
+                    Quantidade de cada subproduto necessária para cobrir a produção líquida da semana. Unidade conforme a ficha técnica.
+                  </div>
+                  <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>{
+                    if (!subprodData) return;
+                    const hdr = ["Código","Subproduto","Qtd Total (FT)","Produtos que usam"];
+                    const body = subprodData.map(sp=>[sp.cod, sp.nome, +sp.total.toFixed(4), sp.prods.join(", ")]);
+                    const ws = styledSheet([hdr,...body],[8,40,16,80],"Subprodutos");
+                    const wb2=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2,ws,"Subprodutos");
+                    XLSX.writeFile(wb2,`Subprodutos_${new Date().toISOString().slice(0,10)}.xlsx`);
+                  }}>⬇ Excel</button>
+                </div>
+                <table style={{borderCollapse:"collapse", width:"100%", fontSize:12.5}}>
+                  <thead><tr>
+                    <th style={{...S.thBase,textAlign:"right"}}>Código</th>
+                    <th style={{...S.thBase,textAlign:"left"}}>Subproduto</th>
+                    <th style={{...S.thBase,textAlign:"right"}}>Qtd Total (FT)</th>
+                    <th style={{...S.thBase,textAlign:"left"}}>Produtos que usam</th>
+                  </tr></thead>
+                  <tbody style={S.mono}>
+                    {subprodData && subprodData.map((sp,i)=>(
+                      <tr key={sp.cod} style={{borderBottom:"1px solid #F0EBE2",background:i%2===0?"#F6F3EE":"#fff"}}>
+                        <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{sp.cod}</td>
+                        <td style={{padding:"5px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontWeight:600}}>{sp.nome}</td>
+                        <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:BRAND.amber}}>{num(sp.total,3)}</td>
+                        <td style={{padding:"5px 8px",textAlign:"left",fontSize:11,color:"#6B6153",fontFamily:"'Inter',sans-serif"}}>
+                          {sp.prods.slice(0,6).join(", ")}{sp.prods.length>6?` +${sp.prods.length-6} mais`:""}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {(!subprodData||!subprodData.length)&&<div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>Nenhum produto do PCP tem ficha técnica com subprodutos mapeados.</div>}
+              </div>
+            )}
+
+            {/* ===== TAB: SUGESTÃO DE COMPRAS ===== */}
+            {tab==="compras" && fichasTec && (
+              <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"64vh"}}>
+                <div style={{padding:"12px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:12, alignItems:"center", flexWrap:"wrap"}}>
+                  <div style={{fontSize:12, color:"#6B6153", flex:1}}>
+                    Total de insumos brutos para cobrir a produção líquida — subprodutos já expandidos via subfichas. Unidade conforme ficha técnica original.
+                  </div>
+                  <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>{
+                    if (!comprasData) return;
+                    const hdr = ["Código","Insumo","Qtd Total (FT)"];
+                    const body = comprasData.map(item=>[item.cod, item.nome, +item.total.toFixed(4)]);
+                    const ws = styledSheet([hdr,...body],[8,48,16],"Sugestão de Compras");
+                    const wb2=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2,ws,"Compras");
+                    XLSX.writeFile(wb2,`Compras_${new Date().toISOString().slice(0,10)}.xlsx`);
+                  }}>⬇ Excel</button>
+                </div>
+                <table style={{borderCollapse:"collapse", width:"100%", fontSize:12.5}}>
+                  <thead><tr>
+                    <th style={{...S.thBase,textAlign:"right"}}>Código</th>
+                    <th style={{...S.thBase,textAlign:"left"}}>Insumo</th>
+                    <th style={{...S.thBase,textAlign:"right"}}>Qtd Total (FT)</th>
+                  </tr></thead>
+                  <tbody style={S.mono}>
+                    {comprasData && comprasData.map((item,i)=>(
+                      <tr key={item.cod} style={{borderBottom:"1px solid #F0EBE2",background:i%2===0?"#F6F3EE":"#fff"}}>
+                        <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{item.cod}</td>
+                        <td style={{padding:"5px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontWeight:600}}>{item.nome}</td>
+                        <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:"#2D6A4F"}}>{num(item.total,3)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {(!comprasData||!comprasData.length)&&<div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>Nenhum produto do PCP tem ficha técnica carregada ou a produção líquida é zero para todos.</div>}
               </div>
             )}
 
