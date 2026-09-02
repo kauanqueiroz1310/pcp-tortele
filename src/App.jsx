@@ -314,23 +314,44 @@ function parseCombos(wb) {
 }
 
 function parseFichasTecnicas(wb) {
-  const ft = {}, sf = {};
-  const parseSheet = (sheetName, target) => {
-    const sh = wb.Sheets[sheetName];
-    if (!sh) return;
-    const data = XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, defval: null });
-    for (let i = 1; i < data.length; i++) {
-      const r = data[i] || [];
-      const cod = +r[0], codInsumo = +r[2];
-      const nome = String(r[3] || "").trim();
-      const quant = parseFloat(r[4]);
-      if (!cod || isNaN(cod) || !codInsumo || isNaN(codInsumo) || isNaN(quant) || quant <= 0) continue;
-      (target[cod] ||= []).push({ codInsumo, nome, quant });
+  const ft = {};
+  const sh = wb.Sheets[wb.SheetNames[0]];
+  if (!sh) return { ft: {}, sf: {}, sfCodes: new Set() };
+  const data = XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, defval: null });
+
+  let currentCod = null, currentRend = 1, inIng = false;
+  for (const r of data) {
+    const r0 = String(r[0] || "").trim();
+    const r1 = String(r[1] || "").trim();
+    // Product header: col 0 = numeric code, col 2 = product name, col 12 = rendimento
+    if (/^\d{3,}$/.test(r0) && r[2]) {
+      currentCod = +r0;
+      const rend = r[12];
+      currentRend = (rend != null && +rend > 0) ? +rend : 1;
+      inIng = false;
     }
-  };
-  parseSheet("Ficha Técnica", ft);
-  parseSheet("Subfichas", sf);
-  const sfCodes = new Set(Object.keys(sf).map(Number));
+    // Ingredient section header: col 1 = "Produto", col 7 = "Sigla"
+    if (r1 === "Produto" && String(r[7] || "").trim() === "Sigla") { inIng = true; continue; }
+    // End of ingredient section
+    if (r1.startsWith("Produzir") || r1.startsWith("Observa")) inIng = false;
+    // Ingredient row: col 1 = "CODE  NAME", col 7 = unit, col 9 = quantity
+    if (inIng && currentCod && r[9] != null) {
+      const m = r1.match(/^(\d+)\s+(.+)$/);
+      if (m) {
+        const codInsumo = +m[1], nome = m[2].trim(), quant = parseFloat(r[9]);
+        if (codInsumo && !isNaN(quant) && quant > 0)
+          (ft[currentCod] ||= []).push({ codInsumo, nome, quant: quant / currentRend, unit: String(r[7] || "").trim() });
+      }
+    }
+  }
+
+  // Sub-products: ingredient codes that also have their own FT entry
+  const allIngCodes = new Set();
+  for (const ings of Object.values(ft)) for (const ing of ings) allIngCodes.add(ing.codInsumo);
+  const sfCodes = new Set([...allIngCodes].filter(c => ft[c]));
+  const sf = {};
+  for (const cod of sfCodes) sf[cod] = ft[cod];
+
   return { ft, sf, sfCodes };
 }
 
@@ -860,8 +881,8 @@ export default function PCPTorteleWeb() {
       const data = parseFichasTecnicas(wb);
       const nFT = Object.keys(data.ft).length;
       const nSF = data.sfCodes.size;
-      if (!nFT && !nSF) { setErro("Fichas Técnicas: nenhuma ficha reconhecida. Verifique se as abas se chamam 'Ficha Técnica' e 'Subfichas'."); return; }
-      setFichasTec(data); setFtInfo(`${f.name} — ${nFT} produtos, ${nSF} subprodutos`);
+      if (!nFT) { setErro("Fichas Técnicas: nenhuma ficha reconhecida. Verifique se o arquivo é o export de fichas técnicas do Izzyway (XLS/XLSX com blocos de produto e seção 'Itens da composição')."); return; }
+      setFichasTec(data); setFtInfo(`${f.name} — ${nFT} fichas, ${nSF} subprodutos detectados`);
     } catch (e) { setErro(`Fichas Técnicas: ${e.message}`); }
   }, []);
 
@@ -1133,7 +1154,7 @@ export default function PCPTorteleWeb() {
               desc:"Suba a AUX COMBOS (Cod Combo | Nome | Cod Componente | Nome | Qde).",
               clear: ()=>{setCombos([]);setComboInfo(null);} },
             { n:"5", t:"Fichas Técnicas", info: ftInfo, ref: refFT, handler: handleFT,
-              desc:"Suba a planilha de fichas técnicas (abas: Ficha Técnica e Subfichas). Habilita as abas Subprodutos e Sugestão de Compras.",
+              desc:"Suba o export de Fichas Técnicas do Izzyway (XLS). Sub-produtos são detectados automaticamente. Habilita as abas Subprodutos e Sugestão de Compras.",
               clear: ()=>{setFichasTec(null);setFtInfo(null);} },
           ].map((b)=>(
             <div key={b.n} style={S.panel}>
