@@ -476,7 +476,7 @@ if (typeof window !== "undefined" && !window.storage) {
   };
 }
 const CHUNK = 20000;
-async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, progEdits, progWeekStart }) {
+async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, progEdits, progWeekStart, fichasTec, ftInfo }) {
   try {
     const flat = [];
     const fmeta = files.map((f) => ({ name: f.name, loja: f.loja, n: f.rows.length }));
@@ -491,7 +491,8 @@ async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categor
     await window.storage.set("meta", JSON.stringify({ nChunks, fmeta, savedAt: Date.now() }));
     const prodNames = {};
     for (const f of files) for (const r of f.rows) if (r.cod && r.produto) prodNames[r.cod] = r.produto;
-    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, prodNames, progEdits: progEdits || {}, progWeekStart: progWeekStart || "" }));
+    const ftSer = fichasTec ? { ft: fichasTec.ft, sf: fichasTec.sf, sfCodes: [...fichasTec.sfCodes] } : null;
+    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, prodNames, progEdits: progEdits || {}, progWeekStart: progWeekStart || "", fichasTec: ftSer, ftInfo: ftInfo || null }));
     return true;
   } catch (e) { console.error("save", e); return false; }
 }
@@ -519,7 +520,9 @@ async function loadState() {
     for (const l of LOJAS) grouped[l] = byLoja[l] || [];
     const outFiles = [];
     for (const l of LOJAS) if (grouped[l].length) outFiles.push({ name: `(sessão anterior) ${l}`, loja: l, rows: grouped[l], warnings: [], fromCache: true });
-    return { files: outFiles, ...aux, savedAt: meta.savedAt };
+    const ftRaw = aux.fichasTec;
+    const fichasTec = ftRaw ? { ft: ftRaw.ft, sf: ftRaw.sf, sfCodes: new Set(ftRaw.sfCodes || []) } : null;
+    return { files: outFiles, ...aux, fichasTec, savedAt: meta.savedAt };
   } catch (e) { console.error("load", e); return null; }
 }
 async function clearState() {
@@ -755,6 +758,8 @@ export default function PCPTorteleWeb() {
   const [ftInfo, setFtInfo] = useState(null);
   const [subDetalhado, setSubDetalhado] = useState(false);
   const [comprasDetalhado, setComprasDetalhado] = useState(false);
+  const [subSearch, setSubSearch] = useState("");
+  const [comprasSearch, setComprasSearch] = useState("");
   const [nivelServico, setNivelServico] = useState(0.9);
   const [janela, setJanela] = useState(4);
   const [dataRef, setDataRef] = useState(() => new Date().toISOString().slice(0, 10));
@@ -791,6 +796,7 @@ export default function PCPTorteleWeb() {
         if (st.estoqueArqs) setEstoqueArqs(st.estoqueArqs);
         if (st.categorias) setCategorias(st.categorias);
         if (st.combos) setCombos(st.combos);
+        if (st.fichasTec) { setFichasTec(st.fichasTec); setFtInfo(st.ftInfo || null); }
         if (st.params) {
           setNivelServico(st.params.nivelServico ?? 0.9);
           setJanela(st.params.janela ?? 4);
@@ -972,24 +978,25 @@ export default function PCPTorteleWeb() {
 
   const comprasData = useMemo(() => {
     if (!result || !fichasTec) return null;
+    const { ft, sfCodes } = fichasTec;
     const map = {};
-    const add = (codInsumo, nome, via, ftQuant, sfQuant, liquida) => {
-      const subtotal = sfQuant != null ? ftQuant * sfQuant * liquida : ftQuant * liquida;
-      if (!map[codInsumo]) map[codInsumo] = { nome, total: 0, rows: [] };
-      map[codInsumo].total += subtotal;
-      map[codInsumo].rows.push({ via, ftQuant, sfQuant, liquida, subtotal });
-    };
+    function expand(codInsumo, nome, ftFactor, liquida, via, depth) {
+      if (depth > 6) return;
+      if (sfCodes.has(codInsumo) && ft[codInsumo]?.length) {
+        for (const sub of ft[codInsumo])
+          expand(sub.codInsumo, sub.nome, ftFactor * sub.quant, liquida, `${via} → ${nome}`, depth + 1);
+      } else {
+        const subtotal = ftFactor * liquida;
+        if (!map[codInsumo]) map[codInsumo] = { nome, total: 0, rows: [] };
+        map[codInsumo].total += subtotal;
+        map[codInsumo].rows.push({ via, ftFactor, liquida, subtotal });
+      }
+    }
     for (const r of result.rows) {
       if (!r.liquida) continue;
       const prod = r.produto || `cod ${r.cod}`;
-      for (const e of (fichasTec.ft[r.cod] || [])) {
-        if (fichasTec.sfCodes.has(e.codInsumo)) {
-          for (const se of (fichasTec.sf[e.codInsumo] || []))
-            add(se.codInsumo, se.nome, `${prod} → ${e.nome}`, e.quant, se.quant, r.liquida);
-        } else {
-          add(e.codInsumo, e.nome, prod, e.quant, null, r.liquida);
-        }
-      }
+      for (const e of (ft[r.cod] || []))
+        expand(e.codInsumo, e.nome, e.quant, r.liquida, prod, 0);
     }
     return Object.entries(map)
       .map(([cod, d]) => ({ cod: +cod, nome: d.nome, total: d.total, rows: d.rows.sort((a,b)=>b.subtotal-a.subtotal) }))
@@ -999,7 +1006,7 @@ export default function PCPTorteleWeb() {
   const doSave = async () => {
     setSaveStatus("salvando…");
     const ok = await saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos,
-      params: { nivelServico, janela, dataRef, usarCombos }, progEdits, progWeekStart });
+      params: { nivelServico, janela, dataRef, usarCombos }, progEdits, progWeekStart, fichasTec, ftInfo });
     setSaveStatus(ok ? "✓ salvo" : "falha ao salvar");
     setTimeout(()=>setSaveStatus(""), 3000);
   };
@@ -1621,13 +1628,20 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
             )}
 
             {/* ===== TAB: SUBPRODUTOS ===== */}
-            {tab==="sub" && fichasTec && (
+            {tab==="sub" && fichasTec && (()=>{
+              const sq = subSearch.trim().toLowerCase();
+              const subVis = subprodData ? subprodData.filter(sp=>
+                !sq || sp.nome.toLowerCase().includes(sq) || sp.rows.some(r=>r.produto.toLowerCase().includes(sq))
+              ) : [];
+              return (
               <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"64vh"}}>
                 <div style={{padding:"10px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap"}}>
+                  <input value={subSearch} onChange={e=>setSubSearch(e.target.value)} placeholder="Buscar subproduto ou produto…"
+                    style={{flex:"0 0 220px", padding:"5px 9px", border:"1px solid #D8D0C2", borderRadius:6, fontSize:12, background:"#FDFAF6"}} />
                   <div style={{fontSize:11, color:"#6B6153", flex:1}}>
                     {subDetalhado
-                      ? <>Cálculo: <b>FT (unid/prod acabado) × Líquida = Total subproduto</b>. A unidade de cada subproduto é a mesma da coluna <i>Quant Insumo</i> da sua ficha técnica.</>
-                      : <>Quantidade total de cada subproduto para cobrir a produção líquida. Clique em <b>Detalhado</b> para ver o cálculo linha a linha.</> }
+                      ? <>Cálculo: <b>FT (unid/prod acabado) × Líquida = Total subproduto</b>. Unidade = coluna Quant Insumo da ficha técnica.</>
+                      : <>Quantidade de cada subproduto para a produção líquida. <b>Detalhado</b> mostra o cálculo linha a linha.</> }
                   </div>
                   <div style={{display:"flex",gap:6}}>
                     <button onClick={()=>setSubDetalhado(false)}
@@ -1665,7 +1679,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                       <th style={{...S.thBase,textAlign:"left"}}>Produtos que usam</th>
                     </tr></thead>
                     <tbody style={S.mono}>
-                      {subprodData && subprodData.map((sp,i)=>(
+                      {subVis.map((sp,i)=>(
                         <tr key={sp.cod} style={{borderBottom:"1px solid #F0EBE2",background:i%2===0?"#F6F3EE":"#fff"}}>
                           <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{sp.cod}</td>
                           <td style={{padding:"5px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontWeight:600}}>{sp.nome}</td>
@@ -1687,12 +1701,12 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     <thead><tr>
                       <th style={{...S.thBase,textAlign:"left",width:200}}>Subproduto</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Produto que usa</th>
-                      <th style={{...S.thBase,textAlign:"right",width:130}} title="Quantidade da ficha técnica por unidade do produto acabado (mesma unidade da coluna Quant Insumo)">FT (unid/prod acabado)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:130}} title="Quantidade da ficha técnica por unidade do produto acabado">FT (unid/prod acabado)</th>
                       <th style={{...S.thBase,textAlign:"right",width:90}}>Líquida (un)</th>
                       <th style={{...S.thBase,textAlign:"right",width:160}}>= Total (unid. FT)</th>
                     </tr></thead>
                     <tbody style={S.mono}>
-                      {subprodData && subprodData.map((sp)=>(
+                      {subVis.map((sp)=>(
                         <React.Fragment key={sp.cod}>
                           <tr style={{background:"#F0DBBF"}}>
                             <td colSpan={4} style={{padding:"5px 10px",fontWeight:700,color:BRAND.dark,fontFamily:"'Inter',sans-serif",fontSize:12}}>
@@ -1717,20 +1731,28 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </table>
                 )}
                 <div style={{padding:"8px 16px",fontSize:10,color:"#9A8E7F",borderTop:"1px solid #F0EBE2",fontStyle:"italic"}}>
-                  Unidade: valor bruto da coluna <b>Quant Insumo</b> da sua planilha de fichas técnicas. Confira no arquivo original qual unidade cada subproduto usa (ex.: kg, g, litros, unidades).
+                  Unidade: coluna <b>Quant Insumo</b> da ficha técnica. Confira no arquivo original qual unidade cada subproduto usa (kg, g, litros, unidades).
+                  {sq && <> · <b>{subVis.length}</b> resultado{subVis.length!==1?"s":""} para <i>"{subSearch}"</i></>}
                 </div>
                 {(!subprodData||!subprodData.length)&&<div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>Nenhum produto do PCP tem ficha técnica com subprodutos mapeados.</div>}
               </div>
-            )}
+            );})()}
 
             {/* ===== TAB: SUGESTÃO DE COMPRAS ===== */}
-            {tab==="compras" && fichasTec && (
+            {tab==="compras" && fichasTec && (()=>{
+              const cq = comprasSearch.trim().toLowerCase();
+              const comprasVis = comprasData ? comprasData.filter(item=>
+                !cq || item.nome.toLowerCase().includes(cq) || item.rows.some(r=>r.via.toLowerCase().includes(cq))
+              ) : [];
+              return (
               <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"64vh"}}>
                 <div style={{padding:"10px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap"}}>
+                  <input value={comprasSearch} onChange={e=>setComprasSearch(e.target.value)} placeholder="Buscar insumo ou produto…"
+                    style={{flex:"0 0 220px", padding:"5px 9px", border:"1px solid #D8D0C2", borderRadius:6, fontSize:12, background:"#FDFAF6"}} />
                   <div style={{fontSize:11, color:"#6B6153", flex:1}}>
                     {comprasDetalhado
-                      ? <>Direto: <b>FT × Líquida</b>. Via subproduto: <b>FT prod × FT sub × Líquida</b>. FT = quantidade da coluna <i>Quant Insumo</i> por unidade.</>
-                      : <>Total de insumos brutos (subprodutos expandidos via subfichas). Clique <b>Detalhado</b> para ver cada multiplicação.</> }
+                      ? <>Expansão recursiva de sub-produtos até insumos brutos. Fator FT = multiplicador acumulado da cadeia. Subtotal = Fator × Líquida.</>
+                      : <>Insumos brutos totais — sub-produtos expandidos completamente. <b>Detalhado</b> mostra a cadeia de cada contribuição.</> }
                   </div>
                   <div style={{display:"flex",gap:6}}>
                     <button onClick={()=>setComprasDetalhado(false)}
@@ -1744,14 +1766,14 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>{
                     if (!comprasData) return;
-                    const hdr = ["Código","Insumo","Via (produto ou subproduto)","FT prod (unid/prod)","FT sub (unid/subprod)","Líquida (un)","Subtotal","Total Insumo"];
+                    const hdr = ["Código","Insumo","Via (cadeia produto → sub-produto)","Fator FT acumulado","Líquida (un)","Subtotal","Total Insumo"];
                     const body = [];
                     for (const item of comprasData) {
                       for (const row of item.rows)
-                        body.push([item.cod, item.nome, row.via, +row.ftQuant.toFixed(2), row.sfQuant!=null?+row.sfQuant.toFixed(2):"—", row.liquida, +row.subtotal.toFixed(2), ""]);
-                      body.push(["","","","","","TOTAL",+item.total.toFixed(2),+item.total.toFixed(2)]);
+                        body.push([item.cod, item.nome, row.via, +row.ftFactor.toFixed(4), row.liquida, +row.subtotal.toFixed(2), ""]);
+                      body.push(["","","","","TOTAL",+item.total.toFixed(2),+item.total.toFixed(2)]);
                     }
-                    const ws = styledSheet([hdr,...body],[8,40,50,14,14,10,12,14],"Compras Detalhado");
+                    const ws = styledSheet([hdr,...body],[8,40,60,14,10,12,14],"Compras Detalhado");
                     const wb2=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2,ws,"Compras");
                     XLSX.writeFile(wb2,`Compras_${new Date().toISOString().slice(0,10)}.xlsx`);
                   }}>⬇ Excel</button>
@@ -1764,10 +1786,10 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                       <th style={{...S.thBase,textAlign:"right",width:80}}>Código</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Insumo</th>
                       <th style={{...S.thBase,textAlign:"right",width:150}} title="Unidade = coluna Quant Insumo da ficha técnica">Total (unid. FT)</th>
-                      <th style={{...S.thBase,textAlign:"right",width:90}}>Nº linhas</th>
+                      <th style={{...S.thBase,textAlign:"right",width:90}}>Nº contrib.</th>
                     </tr></thead>
                     <tbody style={S.mono}>
-                      {comprasData && comprasData.map((item,i)=>(
+                      {comprasVis.map((item,i)=>(
                         <tr key={item.cod} style={{borderBottom:"1px solid #F0EBE2",background:i%2===0?"#F6F3EE":"#fff"}}>
                           <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{item.cod}</td>
                           <td style={{padding:"5px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontWeight:600}}>{item.nome}</td>
@@ -1783,18 +1805,17 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                 {comprasDetalhado && (
                   <table style={{borderCollapse:"collapse", width:"100%", fontSize:11.5}}>
                     <thead><tr>
-                      <th style={{...S.thBase,textAlign:"left",width:220}}>Insumo</th>
-                      <th style={{...S.thBase,textAlign:"left"}}>Via (produto → subproduto)</th>
-                      <th style={{...S.thBase,textAlign:"right",width:110}} title="Quantidade da ficha técnica por unidade do produto acabado">FT prod (unid/prod)</th>
-                      <th style={{...S.thBase,textAlign:"right",width:110}} title="Quantidade da subficha por unidade de subproduto — só aparece quando expandido via subproduto">FT sub (unid/subprod)</th>
+                      <th style={{...S.thBase,textAlign:"left",width:200}}>Insumo</th>
+                      <th style={{...S.thBase,textAlign:"left"}}>Cadeia (produto → sub-produtos → insumo)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:120}} title="Multiplicador acumulado de toda a cadeia FT, por unidade do produto acabado">Fator FT</th>
                       <th style={{...S.thBase,textAlign:"right",width:90}}>Líquida (un)</th>
-                      <th style={{...S.thBase,textAlign:"right",width:160}}>= Subtotal (unid. FT)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:140}}>= Subtotal</th>
                     </tr></thead>
                     <tbody style={S.mono}>
-                      {comprasData && comprasData.map((item)=>(
+                      {comprasVis.map((item)=>(
                         <React.Fragment key={item.cod}>
                           <tr style={{background:"#E8F0E4"}}>
-                            <td colSpan={5} style={{padding:"5px 10px",fontWeight:700,color:"#1A4A2F",fontFamily:"'Inter',sans-serif",fontSize:12}}>
+                            <td colSpan={4} style={{padding:"5px 10px",fontWeight:700,color:"#1A4A2F",fontFamily:"'Inter',sans-serif",fontSize:12}}>
                               {item.nome} <span style={{fontWeight:400,color:"#6B6153",fontSize:11}}>(cod {item.cod})</span>
                             </td>
                             <td style={{padding:"5px 10px",textAlign:"right",fontWeight:700,color:"#2D6A4F",fontSize:13}}>{num(item.total,2)}</td>
@@ -1802,16 +1823,11 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                           {item.rows.map((row,j)=>(
                             <tr key={j} style={{borderBottom:"1px solid #F0EBE2",background:j%2===0?"#FAFDF8":"#fff"}}>
                               <td style={{padding:"3px 10px 3px 18px",color:"#8A8073",fontSize:10,fontFamily:"'Inter',sans-serif"}}>{item.nome}</td>
-                              <td title={row.via} style={{padding:"3px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontSize:11,maxWidth:340,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.via}</td>
-                              <td style={{padding:"3px 8px",textAlign:"right",color:"#264478",fontWeight:600}}>{num(row.ftQuant,2)}</td>
-                              <td style={{padding:"3px 8px",textAlign:"right",color:row.sfQuant!=null?"#B96A1B":"#C0B9B0"}}>
-                                {row.sfQuant!=null ? num(row.sfQuant,2) : "—"}
-                              </td>
+                              <td title={row.via} style={{padding:"3px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontSize:11,maxWidth:380,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.via}</td>
+                              <td style={{padding:"3px 8px",textAlign:"right",color:"#264478",fontWeight:600}}>{num(row.ftFactor,4)}</td>
                               <td style={{padding:"3px 8px",textAlign:"right",color:"#2D6A4F"}}>{num(row.liquida)}</td>
                               <td style={{padding:"3px 8px",textAlign:"right",fontWeight:600,color:"#2D6A4F",fontSize:11}}>
-                                {row.sfQuant!=null
-                                  ? `${num(row.ftQuant,2)} × ${num(row.sfQuant,2)} × ${num(row.liquida)} = ${num(row.subtotal,2)}`
-                                  : `${num(row.ftQuant,2)} × ${num(row.liquida)} = ${num(row.subtotal,2)}`}
+                                {`${num(row.ftFactor,4)} × ${num(row.liquida)} = ${num(row.subtotal,2)}`}
                               </td>
                             </tr>
                           ))}
@@ -1821,11 +1837,12 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </table>
                 )}
                 <div style={{padding:"8px 16px",fontSize:10,color:"#9A8E7F",borderTop:"1px solid #F0EBE2",fontStyle:"italic"}}>
-                  Unidade: valor bruto da coluna <b>Quant Insumo</b> da sua planilha de fichas técnicas. Confira no arquivo original qual unidade cada insumo usa (ex.: kg, g, litros, unidades/embalagens).
+                  Unidade: coluna <b>Quant Insumo</b> da ficha técnica. Sub-produtos são expandidos recursivamente — somente insumos brutos aparecem aqui.
+                  {cq && <> · <b>{comprasVis.length}</b> resultado{comprasVis.length!==1?"s":""} para <i>"{comprasSearch}"</i></>}
                 </div>
                 {(!comprasData||!comprasData.length)&&<div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>Nenhum produto do PCP tem ficha técnica carregada ou a produção líquida é zero para todos.</div>}
               </div>
-            )}
+            );})()}
 
             {/* ===== TAB: CMV ===== */}
             {tab==="cmv" && (
