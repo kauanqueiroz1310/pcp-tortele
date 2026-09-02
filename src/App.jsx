@@ -1605,7 +1605,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                 <div style={{padding:"10px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap"}}>
                   <div style={{fontSize:11, color:"#6B6153", flex:1}}>
                     {subDetalhado
-                      ? <>Cálculo por produto: <b>Qtd FT (p/unid) × Líquida = Subtotal</b>. Qtd FT = quantidade da ficha técnica por unidade do produto acabado.</>
+                      ? <>Cálculo: <b>FT (unid/prod acabado) × Líquida = Total subproduto</b>. A unidade de cada subproduto é a mesma da coluna <i>Quant Insumo</i> da sua ficha técnica.</>
                       : <>Quantidade total de cada subproduto para cobrir a produção líquida. Clique em <b>Detalhado</b> para ver o cálculo linha a linha.</> }
                   </div>
                   <div style={{display:"flex",gap:6}}>
@@ -1620,12 +1620,12 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>{
                     if (!subprodData) return;
-                    const hdr = ["Código Sub","Subproduto","Produto","Qtd FT (p/unid)","Líquida","Subtotal","Total Subproduto"];
+                    const hdr = ["Código Sub","Subproduto","Produto","FT (unid/prod)","Líquida (un)","Subtotal","Total Subproduto"];
                     const body = [];
                     for (const sp of subprodData) {
                       for (const row of sp.rows)
-                        body.push([sp.cod, sp.nome, row.produto, +row.ftQuant.toFixed(5), row.liquida, +row.subtotal.toFixed(3), ""]);
-                      body.push(["","","","","TOTAL",+sp.total.toFixed(3),+sp.total.toFixed(3)]);
+                        body.push([sp.cod, sp.nome, row.produto, +row.ftQuant.toFixed(2), row.liquida, +row.subtotal.toFixed(2), ""]);
+                      body.push(["","","","","TOTAL",+sp.total.toFixed(2),+sp.total.toFixed(2)]);
                     }
                     const ws = styledSheet([hdr,...body],[8,36,40,14,10,12,14],"Subprodutos Detalhado");
                     const wb2=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2,ws,"Subprodutos");
@@ -1639,7 +1639,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     <thead><tr>
                       <th style={{...S.thBase,textAlign:"right",width:80}}>Código</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Subproduto</th>
-                      <th style={{...S.thBase,textAlign:"right",width:120}}>Total FT</th>
+                      <th style={{...S.thBase,textAlign:"right",width:150}} title="Unidade = coluna Quant Insumo da ficha técnica">Total (unid. FT)</th>
                       <th style={{...S.thBase,textAlign:"right",width:90}}>Nº produtos</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Produtos que usam</th>
                     </tr></thead>
@@ -1648,7 +1648,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                         <tr key={sp.cod} style={{borderBottom:"1px solid #F0EBE2",background:i%2===0?"#F6F3EE":"#fff"}}>
                           <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{sp.cod}</td>
                           <td style={{padding:"5px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontWeight:600}}>{sp.nome}</td>
-                          <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:BRAND.amber}}>{num(sp.total,3)}</td>
+                          <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:BRAND.amber}}>{num(sp.total,2)}</td>
                           <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{sp.rows.length}</td>
                           <td style={{padding:"5px 8px",textAlign:"left",fontSize:11,color:"#6B6153",fontFamily:"'Inter',sans-serif",maxWidth:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
                             title={sp.rows.map(r=>r.produto).join(", ")}>
@@ -1666,9 +1666,9 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     <thead><tr>
                       <th style={{...S.thBase,textAlign:"left",width:200}}>Subproduto</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Produto que usa</th>
-                      <th style={{...S.thBase,textAlign:"right",width:110}} title="Quantidade da ficha técnica por unidade do produto acabado">Qtd FT p/unid</th>
-                      <th style={{...S.thBase,textAlign:"right",width:90}}>Líquida</th>
-                      <th style={{...S.thBase,textAlign:"right",width:110}}>= Subtotal</th>
+                      <th style={{...S.thBase,textAlign:"right",width:130}} title="Quantidade da ficha técnica por unidade do produto acabado (mesma unidade da coluna Quant Insumo)">FT (unid/prod acabado)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:90}}>Líquida (un)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:160}}>= Total (unid. FT)</th>
                     </tr></thead>
                     <tbody style={S.mono}>
                       {subprodData && subprodData.map((sp)=>(
@@ -1677,16 +1677,16 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                             <td colSpan={4} style={{padding:"5px 10px",fontWeight:700,color:BRAND.dark,fontFamily:"'Inter',sans-serif",fontSize:12}}>
                               {sp.nome} <span style={{fontWeight:400,color:"#7A6450",fontSize:11}}>(cod {sp.cod})</span>
                             </td>
-                            <td style={{padding:"5px 10px",textAlign:"right",fontWeight:700,color:BRAND.amber,fontSize:13}}>{num(sp.total,3)}</td>
+                            <td style={{padding:"5px 10px",textAlign:"right",fontWeight:700,color:BRAND.amber,fontSize:13}}>{num(sp.total,2)}</td>
                           </tr>
                           {sp.rows.map((row,j)=>(
                             <tr key={j} style={{borderBottom:"1px solid #F0EBE2",background:j%2===0?"#FAFAF8":"#fff"}}>
                               <td style={{padding:"4px 10px 4px 20px",color:"#8A8073",fontSize:11}}>{sp.nome}</td>
                               <td style={{padding:"4px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontSize:11}}>{row.produto}</td>
-                              <td style={{padding:"4px 8px",textAlign:"right",color:"#264478",fontWeight:600}}>{num(row.ftQuant,5)}</td>
+                              <td style={{padding:"4px 8px",textAlign:"right",color:"#264478",fontWeight:600}}>{num(row.ftQuant,2)}</td>
                               <td style={{padding:"4px 8px",textAlign:"right",color:"#2D6A4F"}}>{num(row.liquida)}</td>
                               <td style={{padding:"4px 8px",textAlign:"right",fontWeight:600,color:BRAND.amber}}>
-                                {num(row.ftQuant,5)} × {num(row.liquida)} = {num(row.subtotal,3)}
+                                {num(row.ftQuant,2)} × {num(row.liquida)} = {num(row.subtotal,2)}
                               </td>
                             </tr>
                           ))}
@@ -1695,6 +1695,9 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     </tbody>
                   </table>
                 )}
+                <div style={{padding:"8px 16px",fontSize:10,color:"#9A8E7F",borderTop:"1px solid #F0EBE2",fontStyle:"italic"}}>
+                  Unidade: valor bruto da coluna <b>Quant Insumo</b> da sua planilha de fichas técnicas. Confira no arquivo original qual unidade cada subproduto usa (ex.: kg, g, litros, unidades).
+                </div>
                 {(!subprodData||!subprodData.length)&&<div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>Nenhum produto do PCP tem ficha técnica com subprodutos mapeados.</div>}
               </div>
             )}
@@ -1705,7 +1708,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                 <div style={{padding:"10px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap"}}>
                   <div style={{fontSize:11, color:"#6B6153", flex:1}}>
                     {comprasDetalhado
-                      ? <>Direto: <b>Qtd FT × Líquida</b>. Via subproduto: <b>Qtd FT prod × Qtd FT sub × Líquida</b>. Qtd FT = quantidade na ficha técnica por unidade.</>
+                      ? <>Direto: <b>FT × Líquida</b>. Via subproduto: <b>FT prod × FT sub × Líquida</b>. FT = quantidade da coluna <i>Quant Insumo</i> por unidade.</>
                       : <>Total de insumos brutos (subprodutos expandidos via subfichas). Clique <b>Detalhado</b> para ver cada multiplicação.</> }
                   </div>
                   <div style={{display:"flex",gap:6}}>
@@ -1720,14 +1723,14 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>{
                     if (!comprasData) return;
-                    const hdr = ["Código","Insumo","Via (produto ou subproduto)","Qtd FT prod","Qtd FT sub","Líquida","Subtotal","Total Insumo"];
+                    const hdr = ["Código","Insumo","Via (produto ou subproduto)","FT prod (unid/prod)","FT sub (unid/subprod)","Líquida (un)","Subtotal","Total Insumo"];
                     const body = [];
                     for (const item of comprasData) {
                       for (const row of item.rows)
-                        body.push([item.cod, item.nome, row.via, +row.ftQuant.toFixed(5), row.sfQuant!=null?+row.sfQuant.toFixed(5):"—", row.liquida, +row.subtotal.toFixed(3), ""]);
-                      body.push(["","","","","","TOTAL",+item.total.toFixed(3),+item.total.toFixed(3)]);
+                        body.push([item.cod, item.nome, row.via, +row.ftQuant.toFixed(2), row.sfQuant!=null?+row.sfQuant.toFixed(2):"—", row.liquida, +row.subtotal.toFixed(2), ""]);
+                      body.push(["","","","","","TOTAL",+item.total.toFixed(2),+item.total.toFixed(2)]);
                     }
-                    const ws = styledSheet([hdr,...body],[8,40,50,12,12,10,12,14],"Compras Detalhado");
+                    const ws = styledSheet([hdr,...body],[8,40,50,14,14,10,12,14],"Compras Detalhado");
                     const wb2=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2,ws,"Compras");
                     XLSX.writeFile(wb2,`Compras_${new Date().toISOString().slice(0,10)}.xlsx`);
                   }}>⬇ Excel</button>
@@ -1739,7 +1742,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     <thead><tr>
                       <th style={{...S.thBase,textAlign:"right",width:80}}>Código</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Insumo</th>
-                      <th style={{...S.thBase,textAlign:"right",width:120}}>Total FT</th>
+                      <th style={{...S.thBase,textAlign:"right",width:150}} title="Unidade = coluna Quant Insumo da ficha técnica">Total (unid. FT)</th>
                       <th style={{...S.thBase,textAlign:"right",width:90}}>Nº linhas</th>
                     </tr></thead>
                     <tbody style={S.mono}>
@@ -1747,7 +1750,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                         <tr key={item.cod} style={{borderBottom:"1px solid #F0EBE2",background:i%2===0?"#F6F3EE":"#fff"}}>
                           <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{item.cod}</td>
                           <td style={{padding:"5px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontWeight:600}}>{item.nome}</td>
-                          <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:"#2D6A4F"}}>{num(item.total,3)}</td>
+                          <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:"#2D6A4F"}}>{num(item.total,2)}</td>
                           <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073",fontSize:11}}>{item.rows.length}</td>
                         </tr>
                       ))}
@@ -1761,10 +1764,10 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     <thead><tr>
                       <th style={{...S.thBase,textAlign:"left",width:220}}>Insumo</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Via (produto → subproduto)</th>
-                      <th style={{...S.thBase,textAlign:"right",width:100}} title="Qtd FT do produto (p/unid acabada)">FT prod</th>
-                      <th style={{...S.thBase,textAlign:"right",width:100}} title="Qtd FT da subfichas (p/unid de subproduto) — só quando expandido via subproduto">FT sub</th>
-                      <th style={{...S.thBase,textAlign:"right",width:90}}>Líquida</th>
-                      <th style={{...S.thBase,textAlign:"right",width:130}}>= Subtotal</th>
+                      <th style={{...S.thBase,textAlign:"right",width:110}} title="Quantidade da ficha técnica por unidade do produto acabado">FT prod (unid/prod)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:110}} title="Quantidade da subficha por unidade de subproduto — só aparece quando expandido via subproduto">FT sub (unid/subprod)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:90}}>Líquida (un)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:160}}>= Subtotal (unid. FT)</th>
                     </tr></thead>
                     <tbody style={S.mono}>
                       {comprasData && comprasData.map((item)=>(
@@ -1773,21 +1776,21 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                             <td colSpan={5} style={{padding:"5px 10px",fontWeight:700,color:"#1A4A2F",fontFamily:"'Inter',sans-serif",fontSize:12}}>
                               {item.nome} <span style={{fontWeight:400,color:"#6B6153",fontSize:11}}>(cod {item.cod})</span>
                             </td>
-                            <td style={{padding:"5px 10px",textAlign:"right",fontWeight:700,color:"#2D6A4F",fontSize:13}}>{num(item.total,3)}</td>
+                            <td style={{padding:"5px 10px",textAlign:"right",fontWeight:700,color:"#2D6A4F",fontSize:13}}>{num(item.total,2)}</td>
                           </tr>
                           {item.rows.map((row,j)=>(
                             <tr key={j} style={{borderBottom:"1px solid #F0EBE2",background:j%2===0?"#FAFDF8":"#fff"}}>
                               <td style={{padding:"3px 10px 3px 18px",color:"#8A8073",fontSize:10,fontFamily:"'Inter',sans-serif"}}>{item.nome}</td>
                               <td title={row.via} style={{padding:"3px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontSize:11,maxWidth:340,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.via}</td>
-                              <td style={{padding:"3px 8px",textAlign:"right",color:"#264478",fontWeight:600}}>{num(row.ftQuant,5)}</td>
+                              <td style={{padding:"3px 8px",textAlign:"right",color:"#264478",fontWeight:600}}>{num(row.ftQuant,2)}</td>
                               <td style={{padding:"3px 8px",textAlign:"right",color:row.sfQuant!=null?"#B96A1B":"#C0B9B0"}}>
-                                {row.sfQuant!=null ? num(row.sfQuant,5) : "—"}
+                                {row.sfQuant!=null ? num(row.sfQuant,2) : "—"}
                               </td>
                               <td style={{padding:"3px 8px",textAlign:"right",color:"#2D6A4F"}}>{num(row.liquida)}</td>
                               <td style={{padding:"3px 8px",textAlign:"right",fontWeight:600,color:"#2D6A4F",fontSize:11}}>
                                 {row.sfQuant!=null
-                                  ? `${num(row.ftQuant,3)} × ${num(row.sfQuant,3)} × ${num(row.liquida)} = ${num(row.subtotal,3)}`
-                                  : `${num(row.ftQuant,3)} × ${num(row.liquida)} = ${num(row.subtotal,3)}`}
+                                  ? `${num(row.ftQuant,2)} × ${num(row.sfQuant,2)} × ${num(row.liquida)} = ${num(row.subtotal,2)}`
+                                  : `${num(row.ftQuant,2)} × ${num(row.liquida)} = ${num(row.subtotal,2)}`}
                               </td>
                             </tr>
                           ))}
@@ -1796,6 +1799,9 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     </tbody>
                   </table>
                 )}
+                <div style={{padding:"8px 16px",fontSize:10,color:"#9A8E7F",borderTop:"1px solid #F0EBE2",fontStyle:"italic"}}>
+                  Unidade: valor bruto da coluna <b>Quant Insumo</b> da sua planilha de fichas técnicas. Confira no arquivo original qual unidade cada insumo usa (ex.: kg, g, litros, unidades/embalagens).
+                </div>
                 {(!comprasData||!comprasData.length)&&<div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>Nenhum produto do PCP tem ficha técnica carregada ou a produção líquida é zero para todos.</div>}
               </div>
             )}
