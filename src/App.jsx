@@ -512,7 +512,9 @@ async function loadState() {
     const byLoja = {};
     for (const [d, cod, qde, li, vendido, custo] of flat) {
       const loja = LOJAS[li];
-      (byLoja[loja] ||= []).push({ dt: new Date(d*86400000), cod, produto: prodNames[cod] || "", qde, vendido, custo, loja });
+      const _utc = new Date(d*86400000);
+      const _dt = new Date(_utc.getUTCFullYear(), _utc.getUTCMonth(), _utc.getUTCDate());
+      (byLoja[loja] ||= []).push({ dt: _dt, cod, produto: prodNames[cod] || "", qde, vendido, custo, loja });
     }
     const files = meta.fmeta.filter((f)=>f.loja).map((f)=>({ name: f.name, loja: f.loja, rows: [], warnings: [], fromCache: true }));
     // reconstruir rows por loja na ordem dos files (aproximação: agrupar por loja)
@@ -970,6 +972,14 @@ export default function PCPTorteleWeb() {
         map[e.codInsumo].total += subtotal;
         map[e.codInsumo].rows.push({ produto: r.produto || `cod ${r.cod}`, codProd: r.cod, ftQuant: e.quant, liquida: r.liquida, subtotal });
       }
+    }
+    // vendas diretas: subprodutos vendidos individualmente (não só como componente de outros produtos)
+    for (const r of result.rows) {
+      if (!r.liquida) continue;
+      if (!fichasTec.sfCodes.has(r.cod)) continue;
+      if (!map[r.cod]) map[r.cod] = { nome: r.produto || `cod ${r.cod}`, total: 0, rows: [] };
+      map[r.cod].total += r.liquida;
+      map[r.cod].rows.push({ produto: "(venda direta)", codProd: r.cod, ftQuant: 1, liquida: r.liquida, subtotal: r.liquida });
     }
     return Object.entries(map)
       .map(([cod, d]) => ({ cod: +cod, nome: d.nome, total: d.total, rows: d.rows.sort((a,b)=>b.subtotal-a.subtotal) }))
@@ -1766,14 +1776,9 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>{
                     if (!comprasData) return;
-                    const hdr = ["Código","Insumo","Via (cadeia produto → sub-produto)","Fator FT acumulado","Líquida (un)","Subtotal","Total Insumo"];
-                    const body = [];
-                    for (const item of comprasData) {
-                      for (const row of item.rows)
-                        body.push([item.cod, item.nome, row.via, +row.ftFactor.toFixed(4), row.liquida, +row.subtotal.toFixed(2), ""]);
-                      body.push(["","","","","TOTAL",+item.total.toFixed(2),+item.total.toFixed(2)]);
-                    }
-                    const ws = styledSheet([hdr,...body],[8,40,60,14,10,12,14],"Compras Detalhado");
+                    const hdr = ["Código","Insumo","Total (unid. FT)","Nº contribuições"];
+                    const body = comprasData.map(item=>[item.cod, item.nome, +item.total.toFixed(2), item.rows.length]);
+                    const ws = styledSheet([hdr,...body],[8,40,16,14],"Compras Resumo");
                     const wb2=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2,ws,"Compras");
                     XLSX.writeFile(wb2,`Compras_${new Date().toISOString().slice(0,10)}.xlsx`);
                   }}>⬇ Excel</button>
