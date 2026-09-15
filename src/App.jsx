@@ -989,27 +989,48 @@ export default function PCPTorteleWeb() {
   const comprasData = useMemo(() => {
     if (!result || !fichasTec) return null;
     const { ft, sfCodes } = fichasTec;
-    const map = {};
-    function expand(codInsumo, nome, ftFactor, liquida, via, depth) {
+
+    function expandInto(map, codInsumo, nome, ftFactor, valor, via, depth) {
       if (depth > 6) return;
       if (sfCodes.has(codInsumo) && ft[codInsumo]?.length) {
         for (const sub of ft[codInsumo])
-          expand(sub.codInsumo, sub.nome, ftFactor * sub.quant, liquida, `${via} → ${nome}`, depth + 1);
+          expandInto(map, sub.codInsumo, sub.nome, ftFactor * sub.quant, valor, via ? `${via} → ${nome}` : nome, depth + 1);
       } else {
-        const subtotal = ftFactor * liquida;
+        const subtotal = ftFactor * valor;
         if (!map[codInsumo]) map[codInsumo] = { nome, total: 0, rows: [] };
         map[codInsumo].total += subtotal;
-        map[codInsumo].rows.push({ via, ftFactor, liquida, subtotal });
+        if (via !== null) map[codInsumo].rows.push({ via, ftFactor, liquida: valor, subtotal });
       }
     }
+
+    const map = {};
     for (const r of result.rows) {
       if (!r.liquida) continue;
       const prod = r.produto || `cod ${r.cod}`;
       for (const e of (ft[r.cod] || []))
-        expand(e.codInsumo, e.nome, e.quant, r.liquida, prod, 0);
+        expandInto(map, e.codInsumo, e.nome, e.quant, r.liquida, prod, 0);
     }
+
+    // Comparação com semana anterior: demanda real de insumo nas duas últimas semanas fechadas
+    function totalsForWeek(weekIdx) {
+      const m = {};
+      for (const r of result.rows) {
+        const v = r.weeks?.[weekIdx] || 0;
+        if (!v) continue;
+        for (const e of (ft[r.cod] || []))
+          expandInto(m, e.codInsumo, e.nome, e.quant, v, null, 0);
+      }
+      return m;
+    }
+    const semanaAtualMap = totalsForWeek(7);
+    const semanaAnteriorMap = totalsForWeek(6);
+
     return Object.entries(map)
-      .map(([cod, d]) => ({ cod: +cod, nome: d.nome, total: d.total, rows: d.rows.sort((a,b)=>b.subtotal-a.subtotal) }))
+      .map(([cod, d]) => ({
+        cod: +cod, nome: d.nome, total: d.total, rows: d.rows.sort((a,b)=>b.subtotal-a.subtotal),
+        semanaAtual: semanaAtualMap[cod]?.total || 0,
+        semanaAnterior: semanaAnteriorMap[cod]?.total || 0,
+      }))
       .sort((a, b) => b.total - a.total);
   }, [result, fichasTec]);
 
@@ -1776,9 +1797,9 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>{
                     if (!comprasData) return;
-                    const hdr = ["Código","Insumo","Total (unid. FT)","Nº contribuições"];
-                    const body = comprasData.map(item=>[item.cod, item.nome, +item.total.toFixed(2), item.rows.length]);
-                    const ws = styledSheet([hdr,...body],[8,40,16,14],"Compras Resumo");
+                    const hdr = ["Código","Insumo","Compra Mínima","Semana Atual","Semana Anterior"];
+                    const body = comprasData.map(item=>[item.cod, item.nome, +item.total.toFixed(2), +item.semanaAtual.toFixed(2), +item.semanaAnterior.toFixed(2)]);
+                    const ws = styledSheet([hdr,...body],[8,40,16,16,16],"Compras Resumo");
                     const wb2=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2,ws,"Compras");
                     XLSX.writeFile(wb2,`Compras_${new Date().toISOString().slice(0,10)}.xlsx`);
                   }}>⬇ Excel</button>
@@ -1790,18 +1811,27 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     <thead><tr>
                       <th style={{...S.thBase,textAlign:"right",width:80}}>Código</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Insumo</th>
-                      <th style={{...S.thBase,textAlign:"right",width:150}} title="Unidade = coluna Quant Insumo da ficha técnica">Total (unid. FT)</th>
-                      <th style={{...S.thBase,textAlign:"right",width:90}}>Nº contrib.</th>
+                      <th style={{...S.thBase,textAlign:"right",width:150}} title="Unidade = coluna Quant Insumo da ficha técnica">Compra Mínima</th>
+                      <th style={{...S.thBase,textAlign:"right",width:140}} title="Demanda real de insumo na última semana fechada vs. a anterior">Tendência (sem.)</th>
                     </tr></thead>
                     <tbody style={S.mono}>
-                      {comprasVis.map((item,i)=>(
+                      {comprasVis.map((item,i)=>{
+                        const atual = item.semanaAtual, ant = item.semanaAnterior;
+                        const pct = ant > 0 ? (atual - ant) / ant : (atual > 0 ? 1 : 0);
+                        const estavel = Math.abs(pct) < 0.05;
+                        const cor = estavel ? "#8A8073" : (pct > 0 ? "#C4501E" : "#2D6A4F");
+                        const seta = estavel ? "→" : (pct > 0 ? "↑" : "↓");
+                        return (
                         <tr key={item.cod} style={{borderBottom:"1px solid #F0EBE2",background:i%2===0?"#F6F3EE":"#fff"}}>
                           <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{item.cod}</td>
                           <td style={{padding:"5px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontWeight:600}}>{item.nome}</td>
                           <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:"#2D6A4F"}}>{num(item.total,2)}</td>
-                          <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073",fontSize:11}}>{item.rows.length}</td>
+                          <td style={{padding:"5px 8px",textAlign:"right",fontWeight:600,color:cor,fontSize:11}} title={`Semana atual: ${num(atual,2)} · Semana anterior: ${num(ant,2)}`}>
+                            {seta} {estavel ? "estável" : `${Math.abs(pct*100).toFixed(0)}%`}
+                          </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
@@ -1842,7 +1872,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </table>
                 )}
                 <div style={{padding:"8px 16px",fontSize:10,color:"#9A8E7F",borderTop:"1px solid #F0EBE2",fontStyle:"italic"}}>
-                  Unidade: coluna <b>Quant Insumo</b> da ficha técnica. Sub-produtos são expandidos recursivamente — somente insumos brutos aparecem aqui.
+                  Unidade: coluna <b>Quant Insumo</b> da ficha técnica. Sub-produtos são expandidos recursivamente — somente insumos brutos aparecem aqui. Tendência compara a demanda real das duas últimas semanas fechadas.
                   {cq && <> · <b>{comprasVis.length}</b> resultado{comprasVis.length!==1?"s":""} para <i>"{comprasSearch}"</i></>}
                 </div>
                 {(!comprasData||!comprasData.length)&&<div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>Nenhum produto do PCP tem ficha técnica carregada ou a produção líquida é zero para todos.</div>}

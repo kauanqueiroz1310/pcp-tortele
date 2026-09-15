@@ -1,5 +1,62 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 15/09/2026 — v1.23 — Sugestão de Compras: renomeação, tendência semanal
+
+### Ajustes
+- **Coluna "Total (unid. FT)" renomeada para "Compra Mínima"** na aba Sugestão de Compras, deixando mais claro que esse número é o mínimo necessário para cobrir a produção da semana.
+- **Coluna "Nº contribuições" removida** da tela e da exportação — não agregava valor para quem está montando a lista de compras.
+- **Nova coluna "Tendência (sem.)"**: compara a demanda real de cada insumo na última semana fechada com a semana anterior, mostrando seta de alta/queda/estável e o percentual de variação. Ajuda a perceber se o consumo de um insumo está subindo ou caindo antes de fechar a compra.
+- Exportação em Excel agora traz Compra Mínima, Semana Atual e Semana Anterior lado a lado.
+
+### Pendente (aguardando decisão)
+- Estoque atual, categoria e unidade de compra real dos insumos: a planilha de fichas técnicas do Izzyway não traz essas informações prontas — item em aberto até definirmos a fonte de dado.
+
+---
+
+## 09/09/2026 — v1.22 — Correção de datas do PCP Semanal e vendas diretas de subprodutos
+
+### Correções
+- **PCP Semanal — deslocamento de 1 dia corrigido**: ao recarregar uma sessão salva, as datas de venda estavam sendo reconstruídas 3 horas adiantadas (fuso), fazendo vendas de segunda-feira caírem na semana errada. Corrigido a reconstrução da data para usar o dia local correto.
+- **Subprodutos — vendas diretas contabilizadas**: quando um subproduto também é vendido individualmente (não só como componente de outro produto), a venda direta agora entra no total da aba Subprodutos.
+- **Sugestão de Compras — exportação só em Resumo**: removida a opção de exportar em formato Detalhado; a exportação Excel agora traz sempre uma linha por insumo com o total.
+
+---
+
+## 02/09/2026 — v1.21 — Busca nas abas de ficha técnica, explosão recursiva e sessão persistente
+
+### Novidades
+- **Busca por nome** nas abas Subprodutos e Sugestão de Compras.
+- **Explosão de BOM recursiva**: subprodutos que usam outros subprodutos (qualquer profundidade) são totalmente destrinchados até os insumos brutos na Sugestão de Compras.
+- **Sessão salva agora inclui a ficha técnica**: antes, ao salvar a sessão no navegador e reabrir depois, era preciso subir a ficha técnica de novo.
+
+---
+
+## 02/09/2026 — v1.20 — Novo leitor de Fichas Técnicas (formato nativo Izzyway)
+
+### Novidades
+- **Leitor de planilha reescrito** para ler o arquivo exportado direto do Izzyway (sem precisar reformatar manualmente). Detecta produtos, insumos e rendimento automaticamente a partir do formato de blocos do relatório.
+
+---
+
+## 01/09/2026 — v1.19 — Casas decimais e unidades nas abas de ficha técnica
+
+### Ajustes
+- Números das abas Subprodutos e Sugestão de Compras agora mostram no máximo 2 casas decimais.
+- Cabeçalhos de coluna e rodapé explicando que a unidade vem da coluna "Quant Insumo" da ficha técnica.
+
+---
+
+## 02/09/2026 — v1.17 — Fichas Técnicas: Subprodutos, Sugestão de Compras, Excel/PDF na Programação
+
+### Novidades
+- **Upload de Fichas Técnicas (painel 5)**: suba a planilha `Fichas_Tecnicas_Organizado.xlsx` (ou qualquer arquivo com as abas "Ficha Técnica" e "Subfichas") diretamente na tela. O sistema detecta automaticamente quais insumos são subprodutos e faz a explosão em dois níveis.
+- **Aba Subprodutos**: mostra quanto de cada subproduto (ex.: Massa Coxinha, Recheio Frango, Pão de Ló) precisa ser produzido para cobrir a produção líquida da semana. Exibe os produtos que consomem cada subproduto e exporta para Excel.
+- **Aba Sugestão de Compras**: explosão BOM completa — insumos diretos das fichas técnicas + insumos dos subprodutos expandidos pelas subfichas. Resultado: total de cada matéria-prima bruta necessária para a semana. Exporta para Excel.
+- **Exportação Excel da Programação melhorada**: substituída a saída bruta por planilha estilizada com cabeçalho da marca, semana 1 em azul, semana 2 em verde, coluna Líquida destacada, saldo colorido (verde/vermelho).
+- **Exportação PDF da Programação**: novo botão "🖨 PDF" — abre janela otimizada para impressão em paisagem, lista completa de produtos com os dias de produção e saldo.
+
+---
+
 ## 31/08/2026 — v1.14 — Setor no modelo de categorias + Filtros em checkbox
 
 ### Novidades
