@@ -1,5 +1,19 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 15/09/2026 — v1.24 — Sugestão de Compras: estoque do insumo e unidade de compra real
+
+### Novidades
+- **Coluna "Estoque Atual" na Sugestão de Compras**: reaproveita o mesmo arquivo de Estoque Atual já usado no PCP — se o insumo tiver estoque cadastrado lá (comum quando o relatório do Izzyway já cobre todos os produtos, inclusive matérias-primas), ele aparece aqui automaticamente. Sem necessidade de nova planilha.
+- **Coluna "A Comprar (líquido)"**: Compra Mínima menos o Estoque Atual do insumo — a quantidade líquida que realmente falta comprar.
+- **Novo painel opcional "6 — Unidade de Compra"**: planilha com Código do Insumo + Unidade de Compra + Fator de Conversão (ex: farinha usada em KG na receita, comprada em saco de 25kg → fator 25). Quando cadastrada, mostra a coluna "Comprar (unid. real)" já convertida e arredondada para cima (nº de sacos/caixas/fardos a comprar).
+- Exportação em Excel atualizada com todas as colunas novas.
+
+### Pendente (aguardando decisão)
+- Categoria dos insumos: adiada a pedido do Kauan — sem planilha de categoria dedicada por enquanto.
+- Custo estimado da compra: depende do relatório de compras do sistema, ainda não integrado.
+
+---
+
 ## 15/09/2026 — v1.23 — Sugestão de Compras: renomeação, tendência semanal
 
 ### Ajustes

@@ -313,6 +313,33 @@ function parseCombos(wb) {
   return list;
 }
 
+// Fator de conversão de compra por insumo: Código | Unidade de Compra | Fator de Conversão
+// Fator = quantas unidades da ficha técnica cabem em 1 unidade de compra (ex: farinha em KG na receita, comprada em saco de 25kg → fator 25)
+function parseUnidadesCompra(wb) {
+  const map = {};
+  for (const name of wb.SheetNames) {
+    const data = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
+    let hi = -1, iCod = -1, iUnid = -1, iFator = -1;
+    for (let i = 0; i < Math.min(data.length, 10); i++) {
+      const r = (data[i] || []).map((c) => String(c || "").toLowerCase().trim());
+      const ic = r.findIndex((c) => c === "código" || c === "codigo" || c === "cod");
+      const iu = r.findIndex((c) => c.includes("unidade"));
+      const ifr = r.findIndex((c) => c.includes("fator"));
+      if (ic >= 0 && iu >= 0 && ifr >= 0) { hi = i; iCod = ic; iUnid = iu; iFator = ifr; break; }
+    }
+    if (hi < 0) continue;
+    for (let i = hi + 1; i < data.length; i++) {
+      const r = data[i] || [];
+      const cod = parseInt(r[iCod], 10);
+      const unidade = String(r[iUnid] || "").trim();
+      const fator = parseFloat(r[iFator]);
+      if (cod && !isNaN(cod) && unidade && fator > 0) map[cod] = { unidade, fator };
+    }
+    if (Object.keys(map).length) break;
+  }
+  return map;
+}
+
 function parseFichasTecnicas(wb) {
   const ft = {};
   const sh = wb.Sheets[wb.SheetNames[0]];
@@ -476,7 +503,7 @@ if (typeof window !== "undefined" && !window.storage) {
   };
 }
 const CHUNK = 20000;
-async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, progEdits, progWeekStart, fichasTec, ftInfo }) {
+async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, progEdits, progWeekStart, fichasTec, ftInfo, unidCompra, ucInfo }) {
   try {
     const flat = [];
     const fmeta = files.map((f) => ({ name: f.name, loja: f.loja, n: f.rows.length }));
@@ -492,7 +519,7 @@ async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categor
     const prodNames = {};
     for (const f of files) for (const r of f.rows) if (r.cod && r.produto) prodNames[r.cod] = r.produto;
     const ftSer = fichasTec ? { ft: fichasTec.ft, sf: fichasTec.sf, sfCodes: [...fichasTec.sfCodes] } : null;
-    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, prodNames, progEdits: progEdits || {}, progWeekStart: progWeekStart || "", fichasTec: ftSer, ftInfo: ftInfo || null }));
+    await window.storage.set("aux", JSON.stringify({ estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, prodNames, progEdits: progEdits || {}, progWeekStart: progWeekStart || "", fichasTec: ftSer, ftInfo: ftInfo || null, unidCompra: unidCompra || {}, ucInfo: ucInfo || null }));
     return true;
   } catch (e) { console.error("save", e); return false; }
 }
@@ -758,6 +785,8 @@ export default function PCPTorteleWeb() {
   const [usarCombos, setUsarCombos] = useState(true);
   const [fichasTec, setFichasTec] = useState(null);
   const [ftInfo, setFtInfo] = useState(null);
+  const [unidCompra, setUnidCompra] = useState({});
+  const [ucInfo, setUcInfo] = useState(null);
   const [subDetalhado, setSubDetalhado] = useState(false);
   const [comprasDetalhado, setComprasDetalhado] = useState(false);
   const [subSearch, setSubSearch] = useState("");
@@ -785,7 +814,7 @@ export default function PCPTorteleWeb() {
   const [erro, setErro] = useState(null);
   const [saveStatus, setSaveStatus] = useState("");
   const [loadedFromCache, setLoadedFromCache] = useState(false);
-  const refVendas = useRef(null), refEst = useRef(null), refCat = useRef(null), refCombo = useRef(null), refFT = useRef(null);
+  const refVendas = useRef(null), refEst = useRef(null), refCat = useRef(null), refCombo = useRef(null), refFT = useRef(null), refUC = useRef(null);
 
   /* carregar da sessão anterior */
   useEffect(() => {
@@ -799,6 +828,7 @@ export default function PCPTorteleWeb() {
         if (st.categorias) setCategorias(st.categorias);
         if (st.combos) setCombos(st.combos);
         if (st.fichasTec) { setFichasTec(st.fichasTec); setFtInfo(st.ftInfo || null); }
+        if (st.unidCompra && Object.keys(st.unidCompra).length) { setUnidCompra(st.unidCompra); setUcInfo(st.ucInfo || null); }
         if (st.params) {
           setNivelServico(st.params.nivelServico ?? 0.9);
           setJanela(st.params.janela ?? 4);
@@ -892,6 +922,17 @@ export default function PCPTorteleWeb() {
       if (!nFT) { setErro("Fichas Técnicas: nenhuma ficha reconhecida. Verifique se o arquivo é o export de fichas técnicas do Izzyway (XLS/XLSX com blocos de produto e seção 'Itens da composição')."); return; }
       setFichasTec(data); setFtInfo(`${f.name} — ${nFT} fichas, ${nSF} subprodutos detectados`);
     } catch (e) { setErro(`Fichas Técnicas: ${e.message}`); }
+  }, []);
+
+  const handleUC = useCallback(async (fl) => {
+    const f = fl[0]; if (!f) return;
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+      const map = parseUnidadesCompra(wb);
+      const n = Object.keys(map).length;
+      if (!n) { setErro("Unidade de Compra: colunas Código + Unidade de Compra + Fator de Conversão não encontradas."); return; }
+      setUnidCompra(map); setUcInfo(`${f.name} — ${n} insumos`);
+    } catch (e) { setErro(`Unidade de Compra: ${e.message}`); }
   }, []);
 
   const allSales = useMemo(() => {
@@ -1026,18 +1067,28 @@ export default function PCPTorteleWeb() {
     const semanaAnteriorMap = totalsForWeek(6);
 
     return Object.entries(map)
-      .map(([cod, d]) => ({
-        cod: +cod, nome: d.nome, total: d.total, rows: d.rows.sort((a,b)=>b.subtotal-a.subtotal),
-        semanaAtual: semanaAtualMap[cod]?.total || 0,
-        semanaAnterior: semanaAnteriorMap[cod]?.total || 0,
-      }))
+      .map(([cod, d]) => {
+        const codN = +cod;
+        const estL = estoqueEfetivo[codN] || {};
+        const estoqueAtual = LOCAIS_ESTOQUE.reduce((a,l)=>a+Math.max(0, estL[l]||0), 0);
+        const aComprar = Math.max(0, d.total - estoqueAtual);
+        const uc = unidCompra[codN];
+        return {
+          cod: codN, nome: d.nome, total: d.total, rows: d.rows.sort((a,b)=>b.subtotal-a.subtotal),
+          semanaAtual: semanaAtualMap[cod]?.total || 0,
+          semanaAnterior: semanaAnteriorMap[cod]?.total || 0,
+          estoqueAtual, aComprar,
+          unidCompraNome: uc?.unidade || null,
+          comprarUnidReal: uc ? Math.ceil(aComprar / uc.fator) : null,
+        };
+      })
       .sort((a, b) => b.total - a.total);
-  }, [result, fichasTec]);
+  }, [result, fichasTec, estoqueEfetivo, unidCompra]);
 
   const doSave = async () => {
     setSaveStatus("salvando…");
     const ok = await saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos,
-      params: { nivelServico, janela, dataRef, usarCombos }, progEdits, progWeekStart, fichasTec, ftInfo });
+      params: { nivelServico, janela, dataRef, usarCombos }, progEdits, progWeekStart, fichasTec, ftInfo, unidCompra, ucInfo });
     setSaveStatus(ok ? "✓ salvo" : "falha ao salvar");
     setTimeout(()=>setSaveStatus(""), 3000);
   };
@@ -1194,6 +1245,9 @@ export default function PCPTorteleWeb() {
             { n:"5", t:"Fichas Técnicas", info: ftInfo, ref: refFT, handler: handleFT,
               desc:"Suba o export de Fichas Técnicas do Izzyway (XLS). Sub-produtos são detectados automaticamente. Habilita as abas Subprodutos e Sugestão de Compras.",
               clear: ()=>{setFichasTec(null);setFtInfo(null);} },
+            { n:"6", t:"Unidade de Compra (opcional)", info: ucInfo, ref: refUC, handler: handleUC,
+              desc:"Suba uma planilha com Código do Insumo + Unidade de Compra + Fator de Conversão (quantas unidades da receita cabem em 1 unidade de compra, ex: farinha em KG na receita, comprada em saco de 25kg → fator 25). Habilita a coluna \"Comprar (unid. real)\" na Sugestão de Compras.",
+              clear: ()=>{setUnidCompra({});setUcInfo(null);} },
           ].map((b)=>(
             <div key={b.n} style={S.panel}>
               <div style={{ marginBottom:8 }}><span style={S.tag(BRAND.dark,BRAND.cream)}>{b.n}</span><b> {b.t}</b></div>
@@ -1797,9 +1851,9 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>{
                     if (!comprasData) return;
-                    const hdr = ["Código","Insumo","Compra Mínima","Semana Atual","Semana Anterior"];
-                    const body = comprasData.map(item=>[item.cod, item.nome, +item.total.toFixed(2), +item.semanaAtual.toFixed(2), +item.semanaAnterior.toFixed(2)]);
-                    const ws = styledSheet([hdr,...body],[8,40,16,16,16],"Compras Resumo");
+                    const hdr = ["Código","Insumo","Compra Mínima","Estoque Atual","A Comprar (líquido)","Comprar (unid. real)","Unidade de Compra","Semana Atual","Semana Anterior"];
+                    const body = comprasData.map(item=>[item.cod, item.nome, +item.total.toFixed(2), +item.estoqueAtual.toFixed(2), +item.aComprar.toFixed(2), item.comprarUnidReal ?? "", item.unidCompraNome || "", +item.semanaAtual.toFixed(2), +item.semanaAnterior.toFixed(2)]);
+                    const ws = styledSheet([hdr,...body],[8,40,14,14,16,16,16,14,16],"Compras Resumo");
                     const wb2=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2,ws,"Compras");
                     XLSX.writeFile(wb2,`Compras_${new Date().toISOString().slice(0,10)}.xlsx`);
                   }}>⬇ Excel</button>
@@ -1809,10 +1863,13 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                 {!comprasDetalhado && (
                   <table style={{borderCollapse:"collapse", width:"100%", fontSize:12.5}}>
                     <thead><tr>
-                      <th style={{...S.thBase,textAlign:"right",width:80}}>Código</th>
+                      <th style={{...S.thBase,textAlign:"right",width:70}}>Código</th>
                       <th style={{...S.thBase,textAlign:"left"}}>Insumo</th>
-                      <th style={{...S.thBase,textAlign:"right",width:150}} title="Unidade = coluna Quant Insumo da ficha técnica">Compra Mínima</th>
-                      <th style={{...S.thBase,textAlign:"right",width:140}} title="Demanda real de insumo na última semana fechada vs. a anterior">Tendência (sem.)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:120}} title="Unidade = coluna Quant Insumo da ficha técnica">Compra Mínima</th>
+                      <th style={{...S.thBase,textAlign:"right",width:110}} title="Estoque atual do insumo, somado de todas as lojas e CD (mesmo arquivo de Estoque Atual)">Estoque Atual</th>
+                      <th style={{...S.thBase,textAlign:"right",width:130}} title="Compra Mínima menos Estoque Atual">A Comprar (líq.)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:150}} title="Convertido pela planilha de Unidade de Compra (painel 6). Vazio = fator de conversão não cadastrado.">Comprar (unid. real)</th>
+                      <th style={{...S.thBase,textAlign:"right",width:120}} title="Demanda real de insumo na última semana fechada vs. a anterior">Tendência (sem.)</th>
                     </tr></thead>
                     <tbody style={S.mono}>
                       {comprasVis.map((item,i)=>{
@@ -1826,6 +1883,11 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                           <td style={{padding:"5px 8px",textAlign:"right",color:"#8A8073"}}>{item.cod}</td>
                           <td style={{padding:"5px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",fontWeight:600}}>{item.nome}</td>
                           <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:"#2D6A4F"}}>{num(item.total,2)}</td>
+                          <td style={{padding:"5px 8px",textAlign:"right",color:"#264478"}}>{num(item.estoqueAtual,2)}</td>
+                          <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:BRAND.amber}}>{num(item.aComprar,2)}</td>
+                          <td style={{padding:"5px 8px",textAlign:"right",fontWeight:600,color:item.comprarUnidReal!=null?"#2D6A4F":"#C9BFA9"}}>
+                            {item.comprarUnidReal!=null ? `${item.comprarUnidReal} ${item.unidCompraNome}` : "—"}
+                          </td>
                           <td style={{padding:"5px 8px",textAlign:"right",fontWeight:600,color:cor,fontSize:11}} title={`Semana atual: ${num(atual,2)} · Semana anterior: ${num(ant,2)}`}>
                             {seta} {estavel ? "estável" : `${Math.abs(pct*100).toFixed(0)}%`}
                           </td>
@@ -1872,7 +1934,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   </table>
                 )}
                 <div style={{padding:"8px 16px",fontSize:10,color:"#9A8E7F",borderTop:"1px solid #F0EBE2",fontStyle:"italic"}}>
-                  Unidade: coluna <b>Quant Insumo</b> da ficha técnica. Sub-produtos são expandidos recursivamente — somente insumos brutos aparecem aqui. Tendência compara a demanda real das duas últimas semanas fechadas.
+                  Unidade: coluna <b>Quant Insumo</b> da ficha técnica. Sub-produtos são expandidos recursivamente — somente insumos brutos aparecem aqui. Estoque Atual vem do mesmo arquivo de Estoque usado no PCP. Comprar (unid. real) exige a planilha do painel 6. Tendência compara a demanda real das duas últimas semanas fechadas.
                   {cq && <> · <b>{comprasVis.length}</b> resultado{comprasVis.length!==1?"s":""} para <i>"{comprasSearch}"</i></>}
                 </div>
                 {(!comprasData||!comprasData.length)&&<div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>Nenhum produto do PCP tem ficha técnica carregada ou a produção líquida é zero para todos.</div>}
