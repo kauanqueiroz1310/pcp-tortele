@@ -1,5 +1,17 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 17/09/2026 — v1.25 — Correção de dupla contagem de combo em Subprodutos e Compras
+
+### Correções
+- **Combo contado duas vezes em Subprodutos e Compras**: quando um combo tem sua própria ficha técnica cadastrada (listando o subproduto como item, ex: "Combo X" com 1 Travesseiro Misto), o consumo desse combo já era contado por essa ficha técnica — mas a linha de "venda direta" do subproduto também somava a própria líquida, que já incluía o ajuste de combo do arquivo de Combos. Resultado: o mesmo combo entrava duas vezes na conta. Corrigido: agora o sistema identifica quando um combo já tem cobertura pela própria ficha técnica e não soma essa parcela de novo na venda direta nem na Sugestão de Compras. Quando o combo NÃO tem ficha técnica própria, nada muda — o ajuste de combo antigo continua sendo usado normalmente.
+- **Itens de venda direta que não apareciam**: a lista de "venda direta" em Subprodutos só mostrava o item se a necessidade líquida de produção fosse maior que zero. Agora mostra sempre que houver histórico de venda direta (mesmo com estoque atual cobrindo tudo), o que é o critério certo para "item vendido sozinho".
+- Conferido o cálculo da média de combo no PCP Semanal: já estava correto — é a **média semanal** das vendas do combo na janela (soma dividida pelo número de semanas), não a soma do período inteiro. Nenhuma mudança necessária ali.
+
+### Entregável
+- Planilha modelo **Modelo_Unidade_Compra.xlsx** gerada com os exemplos usados na v1.24 (farinha, açúcar, ovo pasteurizado, leite integral) — enviada para conferência.
+
+---
+
 ## 15/09/2026 — v1.24 — Sugestão de Compras: estoque do insumo e unidade de compra real
 
 ### Novidades

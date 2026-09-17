@@ -1001,6 +1001,36 @@ export default function PCPTorteleWeb() {
     alertas: result.rows.filter((r)=>r.alertas.length).length,
   } : null, [result]);
 
+  // Quanto da demanda de combo de cada componente já é capturado pela própria
+  // ficha técnica do combo (o combo, quando também tem ficha técnica cadastrada,
+  // lista o componente como item de composição). Evita somar o mesmo consumo
+  // duas vezes: uma via a ficha técnica do combo, outra via o ajuste de combo
+  // (Modelo_Combos.xlsx) que já é aplicado à média do próprio componente.
+  const comboFTCoverage = useMemo(() => {
+    const coverage = {};
+    if (!result || !fichasTec || !combos.length) return coverage;
+    const rowByCod = {};
+    for (const r of result.rows) rowByCod[r.cod] = r;
+    for (const c of combos) {
+      const comboRow = rowByCod[c.codCombo];
+      if (!comboRow) continue;
+      const comboMedia = comboRow.media - comboRow.combo; // média própria do combo (sem combo aninhado)
+      if (comboMedia <= 0) continue;
+      const temNaFT = (fichasTec.ft[c.codCombo] || []).some((e) => e.codInsumo === c.codComp);
+      if (!temNaFT) continue;
+      coverage[c.codComp] = (coverage[c.codComp] || 0) + c.qde * comboMedia;
+    }
+    return coverage;
+  }, [result, fichasTec, combos]);
+
+  // Líquida do produto excluindo a parcela de combo já coberta pela ficha técnica do próprio combo
+  // (usar nas abas Subprodutos/Compras; a líquida "cheia" continua valendo no PCP Semanal/Programação).
+  const liquidaSemComboDuplicado = useCallback((r) => {
+    const coberto = comboFTCoverage[r.cod] || 0;
+    const mediaAjustada = Math.max(r.media - r.combo, r.media - coberto);
+    return Math.max(0, Math.ceil(mediaAjustada + r.es) - r.estoque);
+  }, [comboFTCoverage]);
+
   const subprodData = useMemo(() => {
     if (!result || !fichasTec) return null;
     const map = {};
@@ -1014,18 +1044,22 @@ export default function PCPTorteleWeb() {
         map[e.codInsumo].rows.push({ produto: r.produto || `cod ${r.cod}`, codProd: r.cod, ftQuant: e.quant, liquida: r.liquida, subtotal });
       }
     }
-    // vendas diretas: subprodutos vendidos individualmente (não só como componente de outros produtos)
+    // vendas diretas: subprodutos vendidos individualmente (não só como componente de outros produtos).
+    // Usa a líquida sem o combo já coberto pela ficha técnica do combo (ver comboFTCoverage acima) e
+    // mostra o item sempre que houver venda direta histórica, mesmo que a necessidade líquida seja zero.
     for (const r of result.rows) {
-      if (!r.liquida) continue;
       if (!fichasTec.sfCodes.has(r.cod)) continue;
+      const mediaDireta = r.media - r.combo;
+      if (mediaDireta <= 0) continue;
+      const liquidaDireta = liquidaSemComboDuplicado(r);
       if (!map[r.cod]) map[r.cod] = { nome: r.produto || `cod ${r.cod}`, total: 0, rows: [] };
-      map[r.cod].total += r.liquida;
-      map[r.cod].rows.push({ produto: "(venda direta)", codProd: r.cod, ftQuant: 1, liquida: r.liquida, subtotal: r.liquida });
+      map[r.cod].total += liquidaDireta;
+      map[r.cod].rows.push({ produto: "(venda direta)", codProd: r.cod, ftQuant: 1, liquida: liquidaDireta, subtotal: liquidaDireta });
     }
     return Object.entries(map)
       .map(([cod, d]) => ({ cod: +cod, nome: d.nome, total: d.total, rows: d.rows.sort((a,b)=>b.subtotal-a.subtotal) }))
       .sort((a, b) => b.total - a.total);
-  }, [result, fichasTec]);
+  }, [result, fichasTec, liquidaSemComboDuplicado]);
 
   const comprasData = useMemo(() => {
     if (!result || !fichasTec) return null;
@@ -1048,8 +1082,10 @@ export default function PCPTorteleWeb() {
     for (const r of result.rows) {
       if (!r.liquida) continue;
       const prod = r.produto || `cod ${r.cod}`;
+      const valor = liquidaSemComboDuplicado(r);
+      if (!valor) continue;
       for (const e of (ft[r.cod] || []))
-        expandInto(map, e.codInsumo, e.nome, e.quant, r.liquida, prod, 0);
+        expandInto(map, e.codInsumo, e.nome, e.quant, valor, prod, 0);
     }
 
     // Comparação com semana anterior: demanda real de insumo nas duas últimas semanas fechadas
@@ -1083,7 +1119,7 @@ export default function PCPTorteleWeb() {
         };
       })
       .sort((a, b) => b.total - a.total);
-  }, [result, fichasTec, estoqueEfetivo, unidCompra]);
+  }, [result, fichasTec, estoqueEfetivo, unidCompra, liquidaSemComboDuplicado]);
 
   const doSave = async () => {
     setSaveStatus("salvando…");
