@@ -18,9 +18,10 @@ import * as XLSX from "xlsx-js-style";
    ============================================================ */
 
 const Z_TABLE = { 0.8: 0.84, 0.9: 1.28, 0.95: 1.65, 0.99: 2.33 };
-const LOJAS = ["ALDEOTA", "MEIRELES", "RIO MAR", "SUL"];
-const LOCAIS_ESTOQUE = [...LOJAS, "CD"];
+const LOJAS_PADRAO = ["ALDEOTA", "MEIRELES", "RIO MAR", "SUL"];
 const DIAS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
+// Coxinhas de loja: produção 3x por semana (Seg, Qua, Sáb) — códigos definidos pelo operacional
+const COD_COXINHAS = [709, 710, 717];
 
 /* ---------------- helpers ---------------- */
 function parseDateBR(s) {
@@ -38,19 +39,58 @@ function parseDateBR(s) {
 const weekStart = (d) => { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); x.setHours(0,0,0,0); return x; };
 const fmtDM = (d) => `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`;
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-const normLoja = (s) => {
-  const n = String(s || "").toUpperCase().replace(/\s+/g, "");
-  if (n.includes("ALDEOTA")) return "ALDEOTA";
-  if (n.includes("MEIRELES")) return "MEIRELES";
-  if (n.includes("RIOMAR") || n === "RM") return "RIO MAR";
-  if (n === "SUL" || n.includes("SUL")) return "SUL";
-  if (n === "CD" || n.includes("DISTRIB")) return "CD";
+const chaveLoja = (s) => String(s || "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z0-9]/g, "");
+// Reconhece a loja em um texto (cabeçalho de coluna ou nome de arquivo) entre as lojas cadastradas
+function matchLoja(s, lojas, comCD = true) {
+  const n = chaveLoja(s);
+  if (!n) return null;
+  if (comCD && (n === "CD" || n.includes("DISTRIB"))) return "CD";
+  const cands = lojas.map((l) => [l, chaveLoja(l)]).filter(([, k]) => k);
+  const exato = cands.find(([, k]) => k === n);
+  if (exato) return exato[0];
+  // o nome mais longo vence: "IFOOD ALDEOTA" é reconhecido antes de "ALDEOTA"
+  const contidos = cands.filter(([, k]) => n.includes(k)).sort((a, b) => b[1].length - a[1].length);
+  if (contidos.length) return contidos[0][0];
+  // apelidos antigos do Rio Mar: "RM" ou a palavra "RIO" isolada (não casa com "relatorio")
+  if (n === "RM" || /(^|[^A-Z])RIO([^A-Z]|$)/.test(String(s).toUpperCase())) {
+    const r = cands.find(([, k]) => k.startsWith("RIO"));
+    if (r) return r[0];
+  }
   return null;
-};
+}
+// Abreviações de 3 letras para cabeçalhos, sem repetir entre lojas
+function abrevLojas(lojas) {
+  const out = {}, usados = new Set();
+  for (const l of lojas) {
+    const palavras = String(l).trim().split(/\s+/);
+    let a = chaveLoja(l).slice(0, 3) || "LJ";
+    if (usados.has(a) && palavras.length > 1) a = chaveLoja(palavras[0]).slice(0, 2) + chaveLoja(palavras[palavras.length - 1]).slice(0, 1);
+    let k = 2; const base = a;
+    while (usados.has(a)) a = base.slice(0, 2) + (k++);
+    usados.add(a); out[l] = a;
+  }
+  return out;
+}
 const isSalgado = (cat) => {
   const c = String(cat || "").toLowerCase();
   return c.includes("salgado");
 };
+const isBoloDoDia = (cat) => String(cat || "").trim().toLowerCase().startsWith("bolo");
+
+// Regra dos bolos (aba PCP - BOLO DO DIA): recebe 7 valores por dia de venda (Seg..Dom) e devolve a produção por dia
+function regraBolos(d) {
+  return [
+    Math.ceil((d[0] + d[1]) / 2), Math.ceil((d[1] + d[2]) / 2), Math.ceil((d[2] + d[3]) / 2), Math.ceil((d[3] + d[4]) / 2),
+    Math.ceil(d[4] / 2 + d[5] + d[6] / 2), Math.ceil((d[6] + d[0]) / 2), 0,
+  ];
+}
+// Regra das coxinhas (aba PCP - COXINHAS): produção só Seg, Qua e Sáb
+function regraCoxinhas(d) {
+  return [
+    Math.ceil(d[0] / 2 + d[1] + d[2] / 2), null, Math.ceil(d[2] / 2 + d[3] + d[4] + d[5] / 2), null, null,
+    Math.ceil(d[5] / 2 + d[6] + d[0] / 2), null,
+  ];
+}
 
 // Distribui um total inteiro entre N grupos com pesos, garantindo sum(result) === total
 function distribute(total, weights) {
@@ -147,7 +187,8 @@ function parseVendas(wb) {
   return { rows, warnings };
 }
 
-function parseEstoquePorLoja(wb) {
+function parseEstoquePorLoja(wb, lojas) {
+  const normLoja = (s) => matchLoja(s, lojas);
   // retorna { cod: {ALDEOTA: n, MEIRELES: n, "RIO MAR": n, SUL: n, CD: n} }
   const map = {};
   const add = (cod, loja, v) => {
@@ -383,7 +424,8 @@ function parseFichasTecnicas(wb) {
 }
 
 /* ---------------- cálculo ---------------- */
-function computeAll(sales, params, estoqueLoja, categorias, combos) {
+function computeAll(sales, params, estoqueLoja, categorias, combos, lojas) {
+  const LOJAS = lojas, LOCAIS_ESTOQUE = [...lojas, "CD"];
   const { nivelServico, janela, dataRef, usarCombos } = params;
   const Z = Z_TABLE[nivelServico] ?? 1.28;
   const ref = new Date(dataRef);
@@ -441,6 +483,7 @@ function computeAll(sales, params, estoqueLoja, categorias, combos) {
     const estL = estoqueLoja[cod] || {};
     const estoquePorLocal = LOCAIS_ESTOQUE.map((l) => Math.max(0, estL[l] || 0));
     const estoque = estoquePorLocal.reduce((a,b)=>a+b,0);
+    const estCD = Math.max(0, estL.CD || 0);
     const liquida = Math.max(0, sugerida - estoque);
     const ultima = weeks[7];
     const tend = media > 0 ? (ultima - media) / media : 0;
@@ -479,7 +522,7 @@ function computeAll(sales, params, estoqueLoja, categorias, combos) {
     const cmvPct = cm.venda > 0 ? cm.custo / cm.venda : (cm.custo > 0 ? null : 0);
 
     return { cod, produto: names[cod], categoria, setor, weeks, partial, combo, media, dp, cv, min, max,
-      tend, es, margem, sugerida, estoque, estoquePorLocal, liquida, mixLoja, sugLoja, estPorLoja,
+      tend, es, margem, sugerida, estoque, estoquePorLocal, estCD, liquida, mixLoja, sugLoja, estPorLoja,
       liqLoja, mixDia, liqDia, sugDia, prog, alertas,
       cmvQde: cm.qde, cmvVenda: cm.venda, cmvCusto: cm.custo,
       custoUnit: cm.qde>0?cm.custo/cm.qde:0, precoMedio: cm.qde>0?cm.venda/cm.qde:0, cmvPct };
@@ -490,8 +533,33 @@ function computeAll(sales, params, estoqueLoja, categorias, combos) {
   const totVol = withVol.reduce((a,r)=>a+r.vol4,0);
   let ac = 0;
   for (const r of withVol) { ac += r.vol4; r.abc = totVol===0?"C":ac/totVol<=0.8?"A":ac/totVol<=0.95?"B":"C"; }
-  return { rows: withVol, weekStarts, partialWeekStart, lastWeekStart, Z, nCombos: combos.length };
+  return { rows: withVol, weekStarts, partialWeekStart, lastWeekStart, Z, nCombos: combos.length, lojas };
 }
+
+// Envio diário por loja para um grupo de produtos (bolos do dia ou coxinhas).
+// base[loja][dia]  = demanda por dia de venda (mesma conta da aba "Envio Diário" do Excel geral, sobre a Sugerida)
+// envio[loja][dia] = quanto produzir/entregar em cada dia de produção, já com a regra do grupo
+function calcEnvioGrupo(rows, lojas, tipo) {
+  return rows.map((r) => {
+    const lojaTots = distribute(r.sugerida, r.mixLoja);
+    const base = lojaTots.map((lt) => distribute(lt, r.mixDia));
+    let envio;
+    if (tipo === "bolos") {
+      // produção total do dia pela regra (sobre a Líquida por dia), repartida entre as lojas pelo % de cada uma
+      const prod = regraBolos(r.liqDia);
+      const porDia = prod.map((p) => distribute(p, r.mixLoja));
+      envio = lojas.map((_, li) => porDia.map((d) => d[li]));
+    } else {
+      envio = base.map((d) => regraCoxinhas(d));
+    }
+    const totLoja = envio.map((d) => d.reduce((a, b) => a + (b || 0), 0));
+    const fabrica = DIAS.map((_, di) => (envio.every((d) => d[di] == null) ? null : envio.reduce((a, d) => a + (d[di] || 0), 0)));
+    return { cod: r.cod, produto: r.produto, categoria: r.categoria, base, envio, totLoja, fabrica,
+      total: totLoja.reduce((a, b) => a + b, 0) };
+  });
+}
+// Dias em que cada grupo produz (índice em DIAS)
+const DIAS_PROD = { bolos: [0, 1, 2, 3, 4, 5], coxinhas: [0, 2, 5] };
 
 /* ---------------- persistência (localStorage) ---------------- */
 // Shim: se rodar fora do runtime de artifact (Vercel, navegador comum), usa localStorage
@@ -503,19 +571,20 @@ if (typeof window !== "undefined" && !window.storage) {
   };
 }
 const CHUNK = 20000;
-async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, progEdits, progWeekStart, fichasTec, ftInfo, unidCompra, ucInfo }) {
+async function saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos, params, progEdits, progWeekStart, fichasTec, ftInfo, unidCompra, ucInfo, lojas }) {
   try {
     const flat = [];
     const fmeta = files.map((f) => ({ name: f.name, loja: f.loja, n: f.rows.length }));
     for (const f of files) if (f.loja) {
-      const li = LOJAS.indexOf(f.loja);
+      const li = lojas.indexOf(f.loja);
+      if (li < 0) continue;
       for (const r of f.rows) flat.push([Math.round(r.dt.getTime()/86400000), r.cod, r.qde, li, r.vendido||0, r.custo||0]);
     }
     const nChunks = Math.ceil(flat.length / CHUNK);
     for (let i = 0; i < nChunks; i++) {
       await window.storage.set(`sales:${i}`, JSON.stringify(flat.slice(i*CHUNK,(i+1)*CHUNK)));
     }
-    await window.storage.set("meta", JSON.stringify({ nChunks, fmeta, savedAt: Date.now() }));
+    await window.storage.set("meta", JSON.stringify({ nChunks, fmeta, lojas, savedAt: Date.now() }));
     const prodNames = {};
     for (const f of files) for (const r of f.rows) if (r.cod && r.produto) prodNames[r.cod] = r.produto;
     const ftSer = fichasTec ? { ft: fichasTec.ft, sf: fichasTec.sf, sfCodes: [...fichasTec.sfCodes] } : null;
@@ -536,9 +605,12 @@ async function loadState() {
     const auxR = await window.storage.get("aux");
     const aux = auxR ? JSON.parse(auxR.value) : {};
     const prodNames = aux.prodNames || {};
+    // sessões salvas antes do cadastro de lojas não têm a lista: valem as 4 lojas originais
+    const LOJAS = Array.isArray(meta.lojas) && meta.lojas.length ? meta.lojas : LOJAS_PADRAO;
     const byLoja = {};
     for (const [d, cod, qde, li, vendido, custo] of flat) {
       const loja = LOJAS[li];
+      if (!loja) continue;
       const _utc = new Date(d*86400000);
       const _dt = new Date(_utc.getUTCFullYear(), _utc.getUTCMonth(), _utc.getUTCDate());
       (byLoja[loja] ||= []).push({ dt: _dt, cod, produto: prodNames[cod] || "", qde, vendido, custo, loja });
@@ -551,7 +623,7 @@ async function loadState() {
     for (const l of LOJAS) if (grouped[l].length) outFiles.push({ name: `(sessão anterior) ${l}`, loja: l, rows: grouped[l], warnings: [], fromCache: true });
     const ftRaw = aux.fichasTec;
     const fichasTec = ftRaw ? { ft: ftRaw.ft, sf: ftRaw.sf, sfCodes: new Set(ftRaw.sfCodes || []) } : null;
-    return { files: outFiles, ...aux, fichasTec, savedAt: meta.savedAt };
+    return { files: outFiles, ...aux, fichasTec, lojas: LOJAS, savedAt: meta.savedAt };
   } catch (e) { console.error("load", e); return null; }
 }
 async function clearState() {
@@ -616,8 +688,46 @@ function styledSheet(data, cols, title) {
   return ws;
 }
 
+// Excel separado do geral: produção/entrega por loja de bolos do dia e coxinhas (modelo da PROGRAMAÇÃO DIÁRIA)
+function exportEnvioDiario(result) {
+  const { lojas } = result;
+  const ab = abrevLojas(lojas);
+  const wb = XLSX.utils.book_new();
+  const AZUL = { fill:{patternType:"solid",fgColor:{rgb:"EDF1F8"}}, font:{bold:true,color:{rgb:"264478"}}, alignment:{horizontal:"center",vertical:"center"}, numFmt:"#,##0" };
+  const grupos = [
+    ["bolos", "Bolos", result.rows.filter((r) => isBoloDoDia(r.categoria))],
+    ["coxinhas", "Coxinhas", result.rows.filter((r) => COD_COXINHAS.includes(r.cod))],
+  ];
+  for (const [tipo, nome, rows] of grupos) {
+    const dados = calcEnvioGrupo(rows, lojas, tipo);
+    // Aba de produção por loja: 7 dias por loja (em branco nos dias sem produção), total da loja e total da fábrica
+    const h = ["Cód", "Produto", "Categoria",
+      ...lojas.flatMap((l) => DIAS.map((d) => `${ab[l]} ${d}`)),
+      ...lojas.map((l) => `Total ${ab[l]}`),
+      ...DIAS.map((d) => `Fábrica ${d}`), "TOTAL"];
+    const d = dados.map((x) => [x.cod, x.produto, x.categoria,
+      ...x.envio.flatMap((dias) => dias.map((v) => v ?? "")),
+      ...x.totLoja,
+      ...x.fabrica.map((v) => v ?? ""), x.total]);
+    const ws = styledSheet([h, ...d], [7, 38, 20, ...lojas.flatMap(() => DIAS.map(() => 8)), ...lojas.map(() => 10), ...DIAS.map(() => 11), 9], `Envio diário — ${nome}`);
+    const c0 = 3 + lojas.length * 7 + lojas.length;
+    for (let r = 2; r < d.length + 2; r++) for (let c = c0; c < c0 + 8; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      if (ws[addr] && typeof ws[addr].v === "number") ws[addr].s = AZUL;
+    }
+    XLSX.utils.book_append_sheet(wb, ws, `Envio ${nome}`);
+    // Aba de conferência: demanda por dia de venda de cada loja, antes da regra
+    const hb = ["Cód", "Produto", "Categoria", ...lojas.flatMap((l) => DIAS.map((dd) => `${ab[l]} ${dd}`)), ...lojas.map((l) => `Total ${ab[l]}`)];
+    const db = dados.map((x) => [x.cod, x.produto, x.categoria, ...x.base.flat(), ...x.base.map((b) => b.reduce((a, v) => a + v, 0))]);
+    const wsb = styledSheet([hb, ...db], [7, 38, 20, ...lojas.flatMap(() => DIAS.map(() => 8)), ...lojas.map(() => 10)], `Demanda por dia de venda — ${nome}`);
+    XLSX.utils.book_append_sheet(wb, wsb, `Base ${nome}`);
+  }
+  XLSX.writeFile(wb, `Envio_Diario_Tortele_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
 function exportAll(result) {
-  const { rows, weekStarts } = result;
+  const { rows, weekStarts, lojas: LOJAS } = result;
+  const AB = abrevLojas(LOJAS);
   const wb = XLSX.utils.book_new();
   const dt = new Date().toLocaleDateString("pt-BR");
 
@@ -647,7 +757,7 @@ function exportAll(result) {
 
   // ── PCP por Loja ───────────────────────────────────────────────────
   const h3 = ["Cód","Produto","Categoria","Sugerida","Estoque","LÍQUIDA",...LOJAS.map(l=>`${l} %`),...LOJAS.map(l=>`Sug ${l}`),...LOJAS.map(l=>`Est ${l}`),"Est CD",...LOJAS.map(l=>`Líq ${l}`)];
-  const d3 = rows.map((r) => [r.cod,r.produto,r.categoria,r.sugerida,r.estoque,r.liquida,...r.mixLoja.map(m=>+(m*100).toFixed(1)),...r.sugLoja,...r.estPorLoja,r.estoquePorLocal[4],...r.liqLoja]);
+  const d3 = rows.map((r) => [r.cod,r.produto,r.categoria,r.sugerida,r.estoque,r.liquida,...r.mixLoja.map(m=>+(m*100).toFixed(1)),...r.sugLoja,...r.estPorLoja,r.estCD,...r.liqLoja]);
   const ws3 = styledSheet([h3,...d3], [7,38,20,10,10,10,...LOJAS.map(()=>8),...LOJAS.map(()=>10),...LOJAS.map(()=>10),10,...LOJAS.map(()=>10)], "PCP por Loja");
   XLSX.utils.book_append_sheet(wb, ws3, "PCP por Loja");
 
@@ -656,8 +766,8 @@ function exportAll(result) {
   // distribute() garante: sum(dias de uma loja) = total loja, sum(totais lojas) = sugerida.
   const diasAbrev = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
   const h5 = ["Cód","Produto","Categoria","Sugerida","Média","ES",
-    ...LOJAS.flatMap(l => diasAbrev.map(d => `${l.slice(0,3)} ${d}`)),
-    ...LOJAS.map(l => `Total ${l.slice(0,3)}`)];
+    ...LOJAS.flatMap(l => diasAbrev.map(d => `${AB[l]} ${d}`)),
+    ...LOJAS.map(l => `Total ${AB[l]}`)];
   const d5 = rows.map(r => {
     const weekTot = r.sugerida;                                // mesma base do PCP Semanal
     const lojaTots = distribute(weekTot, r.mixLoja);           // soma = weekTot ✓
@@ -811,6 +921,14 @@ export default function PCPTorteleWeb() {
   const [sortKey, setSortKey] = useState("vol4");
   const [sortDesc, setSortDesc] = useState(true);
   const [lojaEnvio, setLojaEnvio] = useState("ALDEOTA");
+  const [lojas, setLojas] = useState(LOJAS_PADRAO);
+  const [novaLoja, setNovaLoja] = useState("");
+  const [envioGrupo, setEnvioGrupo] = useState("bolos");
+  const [envioBase, setEnvioBase] = useState(false);
+  const LOJAS = lojas;
+  const LOCAIS_ESTOQUE = useMemo(() => [...lojas, "CD"], [lojas]);
+  const AB = useMemo(() => abrevLojas(lojas), [lojas]);
+  const lojaEnvioOk = lojas.includes(lojaEnvio) ? lojaEnvio : lojas[0];
   const [erro, setErro] = useState(null);
   const [saveStatus, setSaveStatus] = useState("");
   const [loadedFromCache, setLoadedFromCache] = useState(false);
@@ -821,6 +939,7 @@ export default function PCPTorteleWeb() {
     (async () => {
       const st = await loadState();
       if (st && st.files?.length) {
+        if (st.lojas?.length) setLojas(st.lojas);
         setFiles(st.files);
         if (st.estoqueLoja) setEstoqueLoja(st.estoqueLoja);
         if (st.estoqueInfo) setEstoqueInfo(st.estoqueInfo);
@@ -844,13 +963,51 @@ export default function PCPTorteleWeb() {
     })();
   }, []);
 
-  const detectLoja = (name) => {
-    const n = name.toLowerCase();
-    if (n.includes("aldeota")) return "ALDEOTA";
-    if (n.includes("meireles")) return "MEIRELES";
-    if (n.includes("rio")) return "RIO MAR";
-    if (n.includes("sul")) return "SUL";
-    return "";
+  // Sugere a loja pelo nome do arquivo (sem a extensão); o usuário confirma ou troca no seletor
+  const semExt = (name) => String(name).replace(/\.[a-z0-9]+$/i, "");
+
+  /* ---- cadastro de lojas ---- */
+  const nomeLojaValido = (bruto, atual = null) => {
+    const nome = String(bruto || "").trim().replace(/\s+/g, " ").toUpperCase();
+    if (!nome) return null;
+    if (nome === "CD") { setErro('"CD" é reservado para o centro de distribuição — escolha outro nome para a loja.'); return null; }
+    if (lojas.some((l) => l !== atual && chaveLoja(l) === chaveLoja(nome))) { setErro(`Já existe uma loja chamada "${nome}".`); return null; }
+    return nome;
+  };
+  const addLoja = () => {
+    const nome = nomeLojaValido(novaLoja);
+    if (!nome) return;
+    setErro(null);
+    setLojas((p) => [...p, nome]);
+    setNovaLoja("");
+  };
+  const renameLoja = (antigo, bruto) => {
+    const nome = nomeLojaValido(bruto, antigo);
+    if (!nome || nome === antigo) return false;
+    setErro(null);
+    setLojas((p) => p.map((l) => (l === antigo ? nome : l)));
+    setFiles((p) => p.map((f) => (f.loja === antigo ? { ...f, loja: nome } : f)));
+    setEstoqueArqs((p) => p.map((a) => (a.loja === antigo ? { ...a, loja: nome } : a)));
+    setEstoqueLoja((p) => {
+      const out = {};
+      for (const [cod, m] of Object.entries(p)) {
+        if (m[antigo] == null) { out[cod] = m; continue; }
+        const { [antigo]: v, ...resto } = m;
+        out[cod] = { ...resto, [nome]: (resto[nome] || 0) + v };
+      }
+      return out;
+    });
+    if (lojaEnvio === antigo) setLojaEnvio(nome);
+    return true;
+  };
+  const removeLoja = (nome) => {
+    if (lojas.length <= 1) { setErro("É preciso manter pelo menos uma loja."); return; }
+    const emUso = files.filter((f) => f.loja === nome).length + estoqueArqs.filter((a) => a.loja === nome).length;
+    if (emUso && !window.confirm(`A loja "${nome}" está selecionada em ${emUso} arquivo(s). Ao remover, esses arquivos ficam sem loja até você escolher outra. Remover mesmo assim?`)) return;
+    setErro(null);
+    setLojas((p) => p.filter((l) => l !== nome));
+    setFiles((p) => p.map((f) => (f.loja === nome ? { ...f, loja: "" } : f)));
+    setEstoqueArqs((p) => p.map((a) => (a.loja === nome ? { ...a, loja: "" } : a)));
   };
 
   const handleVendas = useCallback(async (fl) => {
@@ -860,22 +1017,22 @@ export default function PCPTorteleWeb() {
         const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
         const { rows, warnings } = parseVendas(wb);
         if (!rows.length) { setErro(`"${f.name}": nenhuma venda reconhecida.`); continue; }
-        setFiles((p) => [...p, { name: f.name, loja: detectLoja(f.name), rows, warnings }]);
+        setFiles((p) => [...p, { name: f.name, loja: matchLoja(semExt(f.name), lojas, false) || "", rows, warnings }]);
       } catch (e) { setErro(`Falha em "${f.name}": ${e.message}`); }
     }
-  }, []);
+  }, [lojas]);
 
   const handleEstoque = useCallback(async (fl) => {
     const f = fl[0]; if (!f) return;
     try {
       const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
-      const { map, formato } = parseEstoquePorLoja(wb);
+      const { map, formato } = parseEstoquePorLoja(wb, lojas);
       const n = Object.keys(map).length;
       if (!n) { setErro("Estoque: nenhum produto reconhecido."); return; }
       setEstoqueLoja(map);
       setEstoqueInfo(`${f.name} — ${n} produtos, formato ${formato}`);
     } catch (e) { setErro(`Estoque: ${e.message}`); }
-  }, []);
+  }, [lojas]);
 
   const handleEstoqueArq = useCallback(async (fl) => {
     setErro(null);
@@ -885,11 +1042,11 @@ export default function PCPTorteleWeb() {
         const data = parseEstoqueSimples(wb);
         const n = Object.keys(data).length;
         if (!n) { setErro(`"${f.name}": nenhum produto de estoque reconhecido.`); continue; }
-        const loja = normLoja(f.name) || "";
+        const loja = matchLoja(semExt(f.name), lojas) || "";
         setEstoqueArqs((prev) => [...prev, { name: f.name, loja, data }]);
       } catch (e) { setErro(`Estoque "${f.name}": ${e.message}`); }
     }
-  }, []);
+  }, [lojas]);
 
   const handleCat = useCallback(async (fl) => {
     const f = fl[0]; if (!f) return;
@@ -937,7 +1094,8 @@ export default function PCPTorteleWeb() {
 
   const allSales = useMemo(() => {
     const out = [];
-    for (const f of files) if (f.loja) for (const r of f.rows) out.push(r.loja ? r : { ...r, loja: f.loja });
+    // a loja do arquivo sempre vale (inclusive para dados restaurados da sessão, caso a loja seja trocada ou renomeada)
+    for (const f of files) if (f.loja) for (const r of f.rows) out.push(r.loja === f.loja ? r : { ...r, loja: f.loja });
     return out;
   }, [files]);
 
@@ -963,8 +1121,17 @@ export default function PCPTorteleWeb() {
 
   const result = useMemo(() => {
     if (!allSales.length) return null;
-    return computeAll(allSales, { nivelServico, janela, dataRef: new Date(dataRef + "T12:00:00"), usarCombos }, estoqueEfetivo, categorias, combos);
-  }, [allSales, nivelServico, janela, dataRef, usarCombos, estoqueEfetivo, categorias, combos]);
+    return computeAll(allSales, { nivelServico, janela, dataRef: new Date(dataRef + "T12:00:00"), usarCombos }, estoqueEfetivo, categorias, combos, lojas);
+  }, [allSales, nivelServico, janela, dataRef, usarCombos, estoqueEfetivo, categorias, combos, lojas]);
+
+  // Envio diário por loja: bolos do dia e coxinhas, cada grupo com a sua regra de produção
+  const envioDiario = useMemo(() => {
+    if (!result) return null;
+    return {
+      bolos: calcEnvioGrupo(result.rows.filter((r) => isBoloDoDia(r.categoria)), result.lojas, "bolos"),
+      coxinhas: calcEnvioGrupo(result.rows.filter((r) => COD_COXINHAS.includes(r.cod)), result.lojas, "coxinhas"),
+    };
+  }, [result]);
 
   // Sincroniza semana de produção com a semana parcial do resultado
   useEffect(() => {
@@ -1119,12 +1286,12 @@ export default function PCPTorteleWeb() {
         };
       })
       .sort((a, b) => b.total - a.total);
-  }, [result, fichasTec, estoqueEfetivo, unidCompra, liquidaSemComboDuplicado]);
+  }, [result, fichasTec, estoqueEfetivo, unidCompra, liquidaSemComboDuplicado, LOCAIS_ESTOQUE]);
 
   const doSave = async () => {
     setSaveStatus("salvando…");
     const ok = await saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos,
-      params: { nivelServico, janela, dataRef, usarCombos }, progEdits, progWeekStart, fichasTec, ftInfo, unidCompra, ucInfo });
+      params: { nivelServico, janela, dataRef, usarCombos }, progEdits, progWeekStart, fichasTec, ftInfo, unidCompra, ucInfo, lojas });
     setSaveStatus(ok ? "✓ salvo" : "falha ao salvar");
     setTimeout(()=>setSaveStatus(""), 3000);
   };
@@ -1221,6 +1388,32 @@ export default function PCPTorteleWeb() {
               </div>
             )}
             {semLoja && <div style={{marginTop:8, color:"#C4501E", fontWeight:600, fontSize:12}}>⚠ Selecione a loja dos arquivos marcados.</div>}
+
+            {/* Cadastro de lojas: renomear (clicar no nome), remover (×) e criar */}
+            <div style={{borderTop:"1px solid #F0EBE2", marginTop:10, paddingTop:8}}>
+              <div style={{fontSize:11, color:"#6B6153", fontWeight:600, marginBottom:6}}>
+                Lojas <span style={{fontWeight:400, color:"#8A8073"}}>— clique no nome para editar</span>
+              </div>
+              <div style={{display:"flex", gap:6, flexWrap:"wrap", alignItems:"center"}}>
+                {lojas.map((l)=>(
+                  <span key={l} style={{display:"inline-flex", alignItems:"center", border:"1px solid #D8D0C2", borderRadius:6, background:"#fff", paddingRight:2}}>
+                    <input defaultValue={l} aria-label={`Nome da loja ${l}`} size={Math.max(6, l.length + 1)}
+                      onBlur={(e)=>{ if (!renameLoja(l, e.target.value)) e.target.value = l; }}
+                      onKeyDown={(e)=>{ if (e.key==="Enter") e.target.blur(); if (e.key==="Escape") { e.target.value = l; e.target.blur(); } }}
+                      style={{border:"none", background:"transparent", padding:"4px 6px", fontSize:12, fontWeight:600, color:BRAND.dark, textTransform:"uppercase", outlineColor:BRAND.amber}} />
+                    <button onClick={()=>removeLoja(l)} title={`Remover a loja ${l}`}
+                      style={{border:"none", background:"none", color:"#C4501E", cursor:"pointer", fontSize:13, padding:"0 4px"}}>×</button>
+                  </span>
+                ))}
+                <span style={{display:"inline-flex", gap:4}}>
+                  <input value={novaLoja} onChange={(e)=>setNovaLoja(e.target.value)} placeholder="Nova loja…"
+                    onKeyDown={(e)=>{ if (e.key==="Enter") addLoja(); }}
+                    style={{padding:"4px 8px", borderRadius:6, border:"1px dashed #C9BFA9", fontSize:12, width:140, textTransform:"uppercase"}} />
+                  <button onClick={addLoja} disabled={!novaLoja.trim()}
+                    style={{...S.btnGhost, fontSize:11, padding:"4px 10px", opacity:novaLoja.trim()?1:0.5}}>+ Adicionar</button>
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* Painel Estoque */}
@@ -1352,7 +1545,7 @@ export default function PCPTorteleWeb() {
 
             {/* TABS */}
             <div style={{ display:"flex", gap:2, borderBottom:`2px solid ${BRAND.dark}` }}>
-              {[["pcp","PCP Semanal"],["prog","Programação"],["loja","PCP por Loja"],["cmv","Auditoria CMV"],
+              {[["pcp","PCP Semanal"],["prog","Programação"],["loja","PCP por Loja"],["envio","Envio Diário"],["cmv","Auditoria CMV"],
                 ...(fichasTec?[["sub","Subprodutos"],["compras","Sugestão de Compras"]]:[])]
                 .map(([k,l])=>(
                 <button key={k} style={S.tabBtn(tab===k)} onClick={()=>setTab(k)}>{l}</button>
@@ -1374,7 +1567,7 @@ export default function PCPTorteleWeb() {
               <span style={{color:"#8A8073", fontSize:12}}>{visRows.length} produtos</span>
               {tab==="loja" && (
                 <label style={{marginLeft:"auto", fontSize:12, color:"#6B6153", fontWeight:600}}>Loja p/ envio diário:{" "}
-                  <select value={lojaEnvio} onChange={(e)=>setLojaEnvio(e.target.value)}
+                  <select value={lojaEnvioOk} onChange={(e)=>setLojaEnvio(e.target.value)}
                     style={{padding:"7px 10px", borderRadius:8, border:"1px solid #D8D0C2", fontSize:13}}>
                     {LOJAS.map((l)=><option key={l} value={l}>{l}</option>)}
                   </select></label>
@@ -1711,16 +1904,16 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                   <thead><tr>
                     {th("Cod","cod")}{th("Produto","produto",{left:true})}{th("Categ.","categoria",{left:true})}
                     {th("Sug.","sugerida")}{th("Estq","estoque")}{th("LÍQ.","liquida",{style:{background:"#2D6A4F",color:"#fff"}})}
-                    {LOJAS.map((l)=>th(`${l.slice(0,3)} %`,null,{style:{color:"#8A8073"}}))}
-                    {LOJAS.map((l)=>th(`Sug ${l.slice(0,3)}`,null,{style:{color:"#B96A1B"}}))}
-                    {LOJAS.map((l)=>th(`Est ${l.slice(0,3)}`,null))}
+                    {LOJAS.map((l)=>th(`${AB[l]} %`,null,{style:{color:"#8A8073"}}))}
+                    {LOJAS.map((l)=>th(`Sug ${AB[l]}`,null,{style:{color:"#B96A1B"}}))}
+                    {LOJAS.map((l)=>th(`Est ${AB[l]}`,null))}
                     {th("Est CD",null,{style:{color:"#6B6153"}})}
-                    {LOJAS.map((l)=>th(`Líq ${l.slice(0,3)}`,null,{style:{background:"#2D6A4F",color:"#fff"}}))}
-                    {DIAS.map((d)=>th(`${d} → ${lojaEnvio.slice(0,3)}`,null,{style:{background:"#264478",color:"#fff"}}))}
+                    {LOJAS.map((l)=>th(`Líq ${AB[l]}`,null,{style:{background:"#2D6A4F",color:"#fff"}}))}
+                    {DIAS.map((d)=>th(`${d} → ${AB[lojaEnvioOk]}`,null,{style:{background:"#264478",color:"#fff"}}))}
                   </tr></thead>
                   <tbody style={S.mono}>
                     {visRows.slice(0,400).map((r)=>{
-                      const li = LOJAS.indexOf(lojaEnvio);
+                      const li = LOJAS.indexOf(lojaEnvioOk);
                       const envio = r.liqDia.map((v)=>Math.ceil(v*r.mixLoja[li]));
                       return (
                         <tr key={r.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
@@ -1737,7 +1930,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                           {r.mixLoja.map((m,i)=>td(`${num(m*100)}%`,{style:{color:"#B0A794",fontSize:11}}))}
                           {r.sugLoja.map((v,i)=>td(num(v),{style:{color:"#B96A1B"}}))}
                           {r.estPorLoja.map((v,i)=>td(v?num(v):"·",{style:{color:"#8A8073"}}))}
-                          {td(r.estoquePorLocal[4]?num(r.estoquePorLocal[4]):"·",{style:{color:"#6B6153",background:"#F6F3EE"}})}
+                          {td(r.estCD?num(r.estCD):"·",{style:{color:"#6B6153",background:"#F6F3EE"}})}
                           {r.liqLoja.map((v,i)=>td(num(v),{style:{fontWeight:600,color:"#2D6A4F",background:"#F2F7F3"}}))}
                           {envio.map((v,i)=>td(v||"·",{style:{color:"#264478",background:"#EDF1F8"}}))}
                         </tr>
@@ -1747,6 +1940,113 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                 </table>
               </div>
             )}
+
+            {/* ===== TAB: ENVIO DIÁRIO (bolos do dia e coxinhas, por loja) ===== */}
+            {tab==="envio" && envioDiario && (()=>{
+              const q = busca.trim().toLowerCase();
+              const dados = envioDiario[envioGrupo].filter((x)=>!q || String(x.cod).includes(q) || (x.produto||"").toLowerCase().includes(q));
+              const dias = envioBase ? [0,1,2,3,4,5,6] : DIAS_PROD[envioGrupo];
+              const lj = result.lojas;
+              const soma = (f) => dados.reduce((a,x)=>a+(f(x)||0),0);
+              const thG = (label, span, bg) => (
+                <th key={label} colSpan={span} style={{...S.thBase, textAlign:"center", background:bg, color:"#fff", borderLeft:"2px solid #fff"}}>{label}</th>
+              );
+              const bgLoja = (i) => (i%2===0 ? "#FCFAF6" : "#fff");
+              return (
+              <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"64vh"}}>
+                <div style={{padding:"10px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap"}}>
+                  <div style={{display:"flex",gap:6}}>
+                    {[["bolos","Bolos do dia"],["coxinhas","Coxinhas"]].map(([k,l])=>(
+                      <button key={k} onClick={()=>setEnvioGrupo(k)}
+                        style={{...S.btnGhost, fontSize:12, padding:"6px 12px", background:envioGrupo===k?BRAND.amber:"transparent", color:envioGrupo===k?"#fff":BRAND.amber}}>
+                        {l} ({envioDiario[k].length})
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    {[[false,"Produção por loja"],[true,"Demanda por dia de venda"]].map(([k,l])=>(
+                      <button key={l} onClick={()=>setEnvioBase(k)}
+                        style={{...S.btnGhost, fontSize:11, padding:"5px 10px", background:envioBase===k?BRAND.dark:"transparent", color:envioBase===k?"#fff":BRAND.dark, borderColor:BRAND.dark}}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{fontSize:11, color:"#6B6153", flex:1, minWidth:260}}>
+                    {envioBase
+                      ? <>Quanto cada loja deve vender em cada dia (Sugerida repartida pelo % da loja e pelo peso do dia). É a base antes da regra de produção.</>
+                      : envioGrupo==="bolos"
+                        ? <>Seg a Qui: metade do dia + metade do dia seguinte · Sex: metade da Sex + Sáb + metade do Dom · Sáb: metade do Dom + metade da Seg · Dom não produz.</>
+                        : <>Produção 3x por semana — Seg: ½ Seg + Ter + ½ Qua · Qua: ½ Qua + Qui + Sex + ½ Sáb · Sáb: ½ Sáb + Dom + ½ Seg. Só códigos {COD_COXINHAS.join(", ")}.</>}
+                  </div>
+                  <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>exportEnvioDiario(result)}>⬇ Excel (Envio Diário)</button>
+                </div>
+                <table style={{borderCollapse:"collapse", width:"100%", fontSize:12.5}}>
+                  <thead>
+                    <tr>
+                      <th colSpan={2} style={{...S.thBase, background:"#fff"}}></th>
+                      {lj.map((l,i)=>thG(l, dias.length+1, i%2===0?BRAND.dark:"#6B4A2A"))}
+                      {!envioBase && thG("FÁBRICA (TOTAL)", dias.length+1, "#264478")}
+                    </tr>
+                    <tr>
+                      <th style={{...S.thBase, textAlign:"right"}}>Cod</th>
+                      <th style={{...S.thBase, textAlign:"left"}}>Produto</th>
+                      {lj.flatMap((l,i)=>[
+                        ...dias.map((d)=><th key={`${l}-${d}`} style={{...S.thBase, textAlign:"right", background:bgLoja(i), borderLeft:d===dias[0]?"2px solid #E4DDD2":undefined}}>{DIAS[d]}</th>),
+                        <th key={`${l}-t`} style={{...S.thBase, textAlign:"right", background:bgLoja(i), color:BRAND.amber}}>Total</th>,
+                      ])}
+                      {!envioBase && [
+                        ...dias.map((d)=><th key={`f-${d}`} style={{...S.thBase, textAlign:"right", background:"#EDF1F8", color:"#264478", borderLeft:d===dias[0]?"2px solid #264478":undefined}}>{DIAS[d]}</th>),
+                        <th key="f-t" style={{...S.thBase, textAlign:"right", background:"#264478", color:"#fff"}}>Total</th>,
+                      ]}
+                    </tr>
+                  </thead>
+                  <tbody style={S.mono}>
+                    {dados.map((x)=>{
+                      const m = envioBase ? x.base : x.envio;
+                      return (
+                      <tr key={x.cod} style={{borderBottom:"1px solid #F0EBE2"}}>
+                        {td(x.cod,{style:{color:"#8A8073"}})}
+                        <td title={x.produto||`cod ${x.cod}`} style={{padding:"5px 8px",textAlign:"left",whiteSpace:"nowrap"}}>
+                          <div style={{width:210,overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'Inter',sans-serif",color:BRAND.dark}}>
+                            {x.produto||<span style={{color:"#B0A794",fontStyle:"italic"}}>cod {x.cod}</span>}
+                          </div>
+                        </td>
+                        {lj.flatMap((l,i)=>[
+                          ...dias.map((d)=><td key={`${l}-${d}`} style={{padding:"5px 8px",textAlign:"right",background:bgLoja(i),borderLeft:d===dias[0]?"2px solid #E4DDD2":undefined,color:m[i][d]?BRAND.dark:"#C9BFA9"}}>{m[i][d]||"·"}</td>),
+                          <td key={`${l}-t`} style={{padding:"5px 8px",textAlign:"right",background:bgLoja(i),fontWeight:700,color:BRAND.amber}}>{num(m[i].reduce((a,v)=>a+(v||0),0))}</td>,
+                        ])}
+                        {!envioBase && [
+                          ...dias.map((d)=><td key={`f-${d}`} style={{padding:"5px 8px",textAlign:"right",background:"#EDF1F8",color:"#264478",fontWeight:600,borderLeft:d===dias[0]?"2px solid #264478":undefined}}>{x.fabrica[d]||"·"}</td>),
+                          <td key="f-t" style={{padding:"5px 8px",textAlign:"right",background:"#264478",color:"#fff",fontWeight:700}}>{num(x.total)}</td>,
+                        ]}
+                      </tr>
+                      );
+                    })}
+                    {dados.length>1 && (
+                      <tr style={{borderTop:`2px solid ${BRAND.dark}`, fontWeight:700}}>
+                        <td></td>
+                        <td style={{padding:"6px 8px",textAlign:"left",fontFamily:"'Inter',sans-serif",color:BRAND.dark}}>TOTAL</td>
+                        {lj.flatMap((l,i)=>[
+                          ...dias.map((d)=><td key={`${l}-${d}`} style={{padding:"6px 8px",textAlign:"right",background:bgLoja(i),borderLeft:d===dias[0]?"2px solid #E4DDD2":undefined}}>{num(soma((x)=>(envioBase?x.base:x.envio)[i][d]))}</td>),
+                          <td key={`${l}-t`} style={{padding:"6px 8px",textAlign:"right",background:bgLoja(i),color:BRAND.amber}}>{num(soma((x)=>(envioBase?x.base:x.envio)[i].reduce((a,v)=>a+(v||0),0)))}</td>,
+                        ])}
+                        {!envioBase && [
+                          ...dias.map((d)=><td key={`f-${d}`} style={{padding:"6px 8px",textAlign:"right",background:"#EDF1F8",color:"#264478",borderLeft:d===dias[0]?"2px solid #264478":undefined}}>{num(soma((x)=>x.fabrica[d]))}</td>),
+                          <td key="f-t" style={{padding:"6px 8px",textAlign:"right",background:"#264478",color:"#fff"}}>{num(soma((x)=>x.total))}</td>,
+                        ]}
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                {!dados.length && (
+                  <div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>
+                    {envioGrupo==="bolos"
+                      ? "Nenhum produto em categoria de bolo (categorias que começam com \"Bolo\"). Confira o arquivo de Categorias."
+                      : `Nenhuma venda dos códigos de coxinha (${COD_COXINHAS.join(", ")}) nas bases carregadas.`}
+                  </div>
+                )}
+              </div>
+            );})()}
 
             {/* ===== TAB: SUBPRODUTOS ===== */}
             {tab==="sub" && fichasTec && (()=>{

@@ -1,5 +1,21 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 01/10/2026 — v1.26 — Aba Envio Diário (bolos e coxinhas por loja) e cadastro de lojas
+
+### Novidades
+- **Nova aba "Envio Diário"**: mostra quanto produzir e entregar para cada loja, por dia de produção, no modelo das abas ENVIO DIÁRIO BOLOS e ENVIO DIÁRIO COXINHAS da planilha PROGRAMAÇÃO DIÁRIA. Traz o total de cada loja e o total da fábrica por dia.
+  - **Bolos do dia** (categorias que começam com "Bolo"): Seg a Qui = metade do dia + metade do dia seguinte; Sex = metade da Sex + Sáb + metade do Dom; Sáb = metade do Dom + metade da Seg; Dom não produz. A produção do dia é repartida entre as lojas pelo percentual de venda de cada produto em cada loja.
+  - **Coxinhas** (somente códigos 709, 710 e 717): produção 3x por semana — Seg = ½ Seg + Ter + ½ Qua; Qua = ½ Qua + Qui + Sex + ½ Sáb; Sáb = ½ Sáb + Dom + ½ Seg, calculada loja a loja.
+  - Botão para alternar entre "Produção por loja" e "Demanda por dia de venda" (a base antes da regra).
+- **Exportação separada**: botão "⬇ Excel (Envio Diário)" gera um arquivo próprio (abas Envio Bolos, Base Bolos, Envio Coxinhas, Base Coxinhas), independente do "Exportar tudo".
+- **Cadastro de lojas** no painel de Bases de vendas: criar loja nova, renomear (clicando no nome) e remover. A loja nova vale para vendas, estoque e colunas de envio. Criado para incluir o delivery iFood da Aldeota, que sai da fábrica.
+- A loja de cada arquivo continua sendo sugerida pelo nome do arquivo, agora considerando também as lojas criadas.
+
+### Diferença em relação à planilha
+- Na planilha, a repartição dos bolos por loja usava o percentual do primeiro bolo (450) para todos os produtos. No sistema, cada bolo usa o seu próprio percentual por loja.
+
+---
+
 ## 17/09/2026 — v1.25 — Correção de dupla contagem de combo em Subprodutos e Compras
 
 ### Correções
