@@ -20,8 +20,10 @@ import * as XLSX from "xlsx-js-style";
 const Z_TABLE = { 0.8: 0.84, 0.9: 1.28, 0.95: 1.65, 0.99: 2.33 };
 const LOJAS_PADRAO = ["ALDEOTA", "MEIRELES", "RIO MAR", "SUL"];
 const DIAS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
-// Coxinhas de loja: produção 3x por semana (Seg, Qua, Sáb) — códigos definidos pelo operacional
-const COD_COXINHAS = [709, 710, 717];
+// Programação de salgados de loja: produção 3x por semana (Seg, Qua, Sáb) — códigos definidos pelo operacional
+const COD_SALGADOS_PROG = [709, 710, 717, 7007, 7013];
+// Produtos que seguem a programação de bolos mesmo fora das categorias "Bolo…"
+const COD_BOLOS_EXTRA = [3791, 37910];
 
 /* ---------------- helpers ---------------- */
 function parseDateBR(s) {
@@ -76,6 +78,8 @@ const isSalgado = (cat) => {
   return c.includes("salgado");
 };
 const isBoloDoDia = (cat) => String(cat || "").trim().toLowerCase().startsWith("bolo");
+const ehBoloProg = (r) => COD_BOLOS_EXTRA.includes(r.cod) || (isBoloDoDia(r.categoria) && !COD_SALGADOS_PROG.includes(r.cod));
+const ehSalgadoProg = (r) => COD_SALGADOS_PROG.includes(r.cod);
 
 // Regra dos bolos (aba PCP - BOLO DO DIA): recebe 7 valores por dia de venda (Seg..Dom) e devolve a produção por dia
 function regraBolos(d) {
@@ -427,6 +431,8 @@ function parseFichasTecnicas(wb) {
 function computeAll(sales, params, estoqueLoja, categorias, combos, lojas) {
   const LOJAS = lojas, LOCAIS_ESTOQUE = [...lojas, "CD"];
   const { nivelServico, janela, dataRef, usarCombos } = params;
+  // Ajuste manual da produção (%): multiplica a Sugerida (média + ES) antes de abater o estoque. 0% = sem ajuste.
+  const fator = 1 + (params.ajustePct || 0) / 100;
   const Z = Z_TABLE[nivelServico] ?? 1.28;
   const ref = new Date(dataRef);
   const dowRef = (ref.getDay() + 6) % 7;
@@ -479,7 +485,7 @@ function computeAll(sales, params, estoqueLoja, categorias, combos, lojas) {
     const min = Math.min(...jv), max = Math.max(...jv);
     const es = Z * dp;
     const margem = media > 0 ? es / media : 0;
-    const sugerida = Math.ceil(media + es);
+    const sugerida = Math.ceil((media + es) * fator);
     const estL = estoqueLoja[cod] || {};
     const estoquePorLocal = LOCAIS_ESTOQUE.map((l) => Math.max(0, estL[l] || 0));
     const estoque = estoquePorLocal.reduce((a,b)=>a+b,0);
@@ -533,7 +539,7 @@ function computeAll(sales, params, estoqueLoja, categorias, combos, lojas) {
   const totVol = withVol.reduce((a,r)=>a+r.vol4,0);
   let ac = 0;
   for (const r of withVol) { ac += r.vol4; r.abc = totVol===0?"C":ac/totVol<=0.8?"A":ac/totVol<=0.95?"B":"C"; }
-  return { rows: withVol, weekStarts, partialWeekStart, lastWeekStart, Z, nCombos: combos.length, lojas };
+  return { rows: withVol, weekStarts, partialWeekStart, lastWeekStart, Z, nCombos: combos.length, lojas, fator };
 }
 
 // Envio diário por loja para um grupo de produtos (bolos do dia ou coxinhas).
@@ -695,8 +701,8 @@ function exportEnvioDiario(result) {
   const wb = XLSX.utils.book_new();
   const AZUL = { fill:{patternType:"solid",fgColor:{rgb:"EDF1F8"}}, font:{bold:true,color:{rgb:"264478"}}, alignment:{horizontal:"center",vertical:"center"}, numFmt:"#,##0" };
   const grupos = [
-    ["bolos", "Bolos", result.rows.filter((r) => isBoloDoDia(r.categoria))],
-    ["coxinhas", "Coxinhas", result.rows.filter((r) => COD_COXINHAS.includes(r.cod))],
+    ["bolos", "Bolos", result.rows.filter(ehBoloProg)],
+    ["coxinhas", "Salgados", result.rows.filter(ehSalgadoProg)],
   ];
   for (const [tipo, nome, rows] of grupos) {
     const dados = calcEnvioGrupo(rows, lojas, tipo);
@@ -922,6 +928,10 @@ export default function PCPTorteleWeb() {
   const [sortDesc, setSortDesc] = useState(true);
   const [lojaEnvio, setLojaEnvio] = useState("ALDEOTA");
   const [lojas, setLojas] = useState(LOJAS_PADRAO);
+  const [ajustePct, setAjustePct] = useState(0);
+  const [ajusteUI, setAjusteUI] = useState(null); // valor enquanto a barrinha é arrastada; o cálculo só roda ao soltar
+  const ajusteVis = ajusteUI ?? ajustePct;
+  const commitAjuste = () => { if (ajusteUI != null) { setAjustePct(ajusteUI); setAjusteUI(null); } };
   const [novaLoja, setNovaLoja] = useState("");
   const [envioGrupo, setEnvioGrupo] = useState("bolos");
   const [envioBase, setEnvioBase] = useState(false);
@@ -953,6 +963,7 @@ export default function PCPTorteleWeb() {
           setJanela(st.params.janela ?? 4);
           if (st.params.dataRef) setDataRef(st.params.dataRef);
           setUsarCombos(st.params.usarCombos ?? true);
+          setAjustePct(st.params.ajustePct ?? 0);
         }
         if (Object.keys(st.categorias || {}).length) setCatInfo(`${Object.keys(st.categorias).length} produtos (sessão anterior)`);
         if ((st.combos || []).length) setComboInfo(`${st.combos.length} linhas (sessão anterior)`);
@@ -1121,15 +1132,15 @@ export default function PCPTorteleWeb() {
 
   const result = useMemo(() => {
     if (!allSales.length) return null;
-    return computeAll(allSales, { nivelServico, janela, dataRef: new Date(dataRef + "T12:00:00"), usarCombos }, estoqueEfetivo, categorias, combos, lojas);
-  }, [allSales, nivelServico, janela, dataRef, usarCombos, estoqueEfetivo, categorias, combos, lojas]);
+    return computeAll(allSales, { nivelServico, janela, dataRef: new Date(dataRef + "T12:00:00"), usarCombos, ajustePct }, estoqueEfetivo, categorias, combos, lojas);
+  }, [allSales, nivelServico, janela, dataRef, usarCombos, ajustePct, estoqueEfetivo, categorias, combos, lojas]);
 
   // Envio diário por loja: bolos do dia e coxinhas, cada grupo com a sua regra de produção
   const envioDiario = useMemo(() => {
     if (!result) return null;
     return {
-      bolos: calcEnvioGrupo(result.rows.filter((r) => isBoloDoDia(r.categoria)), result.lojas, "bolos"),
-      coxinhas: calcEnvioGrupo(result.rows.filter((r) => COD_COXINHAS.includes(r.cod)), result.lojas, "coxinhas"),
+      bolos: calcEnvioGrupo(result.rows.filter(ehBoloProg), result.lojas, "bolos"),
+      coxinhas: calcEnvioGrupo(result.rows.filter(ehSalgadoProg), result.lojas, "coxinhas"),
     };
   }, [result]);
 
@@ -1195,8 +1206,8 @@ export default function PCPTorteleWeb() {
   const liquidaSemComboDuplicado = useCallback((r) => {
     const coberto = comboFTCoverage[r.cod] || 0;
     const mediaAjustada = Math.max(r.media - r.combo, r.media - coberto);
-    return Math.max(0, Math.ceil(mediaAjustada + r.es) - r.estoque);
-  }, [comboFTCoverage]);
+    return Math.max(0, Math.ceil((mediaAjustada + r.es) * (result?.fator ?? 1)) - r.estoque);
+  }, [comboFTCoverage, result]);
 
   const subprodData = useMemo(() => {
     if (!result || !fichasTec) return null;
@@ -1291,7 +1302,7 @@ export default function PCPTorteleWeb() {
   const doSave = async () => {
     setSaveStatus("salvando…");
     const ok = await saveState({ files, estoqueLoja, estoqueInfo, estoqueArqs, categorias, combos,
-      params: { nivelServico, janela, dataRef, usarCombos }, progEdits, progWeekStart, fichasTec, ftInfo, unidCompra, ucInfo, lojas });
+      params: { nivelServico, janela, dataRef, usarCombos, ajustePct }, progEdits, progWeekStart, fichasTec, ftInfo, unidCompra, ucInfo, lojas });
     setSaveStatus(ok ? "✓ salvo" : "falha ao salvar");
     setTimeout(()=>setSaveStatus(""), 3000);
   };
@@ -1334,6 +1345,7 @@ export default function PCPTorteleWeb() {
           <div style={{...S.mono, fontSize:12, color:"#D4B896", marginLeft:4}}>
             semana {fmtDM(result.lastWeekStart)}–{fmtDM(addDays(result.lastWeekStart,6))}
             {" · "}Z={result.Z}
+            {ajustePct !== 0 && ` · ajuste ${ajustePct > 0 ? "+" : ""}${ajustePct}%`}
             {result.nCombos>0 && usarCombos && " · combos"}
           </div>
         )}
@@ -1526,6 +1538,20 @@ export default function PCPTorteleWeb() {
           <label style={{fontSize:12, color:"#6B6153", fontWeight:600}}>Data de referência<br/>
             <input type="date" value={dataRef} onChange={(e)=>setDataRef(e.target.value)}
               style={{marginTop:4, padding:"6px 10px", borderRadius:6, border:"1px solid #D8D0C2", fontSize:14}}/></label>
+          <label style={{fontSize:12, color:"#6B6153", fontWeight:600}}>
+            Ajuste da produção{" "}
+            <span style={{...S.mono, fontSize:13, color: ajusteVis===0 ? "#8A8073" : ajusteVis>0 ? "#2D6A4F" : "#C4501E"}}>
+              {ajusteVis>0?"+":""}{ajusteVis}%
+            </span>
+            {ajusteVis!==0 && (
+              <button onClick={()=>{setAjusteUI(null);setAjustePct(0);}} style={{border:"none", background:"none", color:BRAND.amber, cursor:"pointer", fontSize:11, marginLeft:6, textDecoration:"underline"}}>zerar</button>
+            )}
+            <br/>
+            <input type="range" min={-50} max={50} step={1} value={ajusteVis} onChange={(e)=>setAjusteUI(+e.target.value)}
+              onPointerUp={commitAjuste} onMouseUp={commitAjuste} onTouchEnd={commitAjuste} onKeyUp={commitAjuste} onBlur={commitAjuste}
+              title="Aumenta ou reduz a quantidade Sugerida de todos os produtos, antes de abater o estoque"
+              style={{marginTop:8, width:200, accentColor:BRAND.amber}}/>
+          </label>
           {result && <button style={{...S.btn, marginLeft:"auto"}} onClick={()=>exportAll(result)}>⬇ Exportar tudo (Excel)</button>}
         </div>
 
@@ -1956,7 +1982,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
               <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"64vh"}}>
                 <div style={{padding:"10px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap"}}>
                   <div style={{display:"flex",gap:6}}>
-                    {[["bolos","Bolos do dia"],["coxinhas","Coxinhas"]].map(([k,l])=>(
+                    {[["bolos","Bolos do dia"],["coxinhas","Salgados"]].map(([k,l])=>(
                       <button key={k} onClick={()=>setEnvioGrupo(k)}
                         style={{...S.btnGhost, fontSize:12, padding:"6px 12px", background:envioGrupo===k?BRAND.amber:"transparent", color:envioGrupo===k?"#fff":BRAND.amber}}>
                         {l} ({envioDiario[k].length})
@@ -1976,7 +2002,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                       ? <>Quanto cada loja deve vender em cada dia (Sugerida repartida pelo % da loja e pelo peso do dia). É a base antes da regra de produção.</>
                       : envioGrupo==="bolos"
                         ? <>Seg a Qui: metade do dia + metade do dia seguinte · Sex: metade da Sex + Sáb + metade do Dom · Sáb: metade do Dom + metade da Seg · Dom não produz.</>
-                        : <>Produção 3x por semana — Seg: ½ Seg + Ter + ½ Qua · Qua: ½ Qua + Qui + Sex + ½ Sáb · Sáb: ½ Sáb + Dom + ½ Seg. Só códigos {COD_COXINHAS.join(", ")}.</>}
+                        : <>Produção 3x por semana — Seg: ½ Seg + Ter + ½ Qua · Qua: ½ Qua + Qui + Sex + ½ Sáb · Sáb: ½ Sáb + Dom + ½ Seg. Só códigos {COD_SALGADOS_PROG.join(", ")}.</>}
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>exportEnvioDiario(result)}>⬇ Excel (Envio Diário)</button>
                 </div>
@@ -2041,8 +2067,8 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                 {!dados.length && (
                   <div style={{padding:"24px",textAlign:"center",color:"#8A8073",fontSize:13}}>
                     {envioGrupo==="bolos"
-                      ? "Nenhum produto em categoria de bolo (categorias que começam com \"Bolo\"). Confira o arquivo de Categorias."
-                      : `Nenhuma venda dos códigos de coxinha (${COD_COXINHAS.join(", ")}) nas bases carregadas.`}
+                      ? `Nenhum produto em categoria de bolo (categorias que começam com "Bolo") nem dos códigos ${COD_BOLOS_EXTRA.join(", ")}. Confira o arquivo de Categorias.`
+                      : `Nenhuma venda dos códigos de salgado (${COD_SALGADOS_PROG.join(", ")}) nas bases carregadas.`}
                   </div>
                 )}
               </div>

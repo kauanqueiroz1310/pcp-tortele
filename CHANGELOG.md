@@ -1,5 +1,14 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 02/10/2026 — v1.27 — Ajuste percentual da produção e novos códigos nas programações
+
+### Novidades
+- **Barrinha "Ajuste da produção"** na faixa de parâmetros: aumenta ou reduz a quantidade Sugerida de todos os produtos, de −50% a +50%. O ajuste é aplicado sobre a Sugerida (média + estoque de segurança), antes de abater o estoque, e vale para todas as abas e exportações. Em 0% o cálculo é exatamente o de sempre. O percentual aparece no cabeçalho quando está ativo e é gravado com a sessão.
+- **Programação de bolos**: passam a entrar também os códigos 3791 e 37910, mesmo fora das categorias "Bolo…".
+- **Programação de salgados** (antes "Coxinhas"): além de 709, 710 e 717, entram os códigos 7007 e 7013, com a mesma regra de produção em Seg, Qua e Sáb. No Excel do Envio Diário as abas passam a se chamar Envio Salgados e Base Salgados.
+
+---
+
 ## 01/10/2026 — v1.26 — Aba Envio Diário (bolos e coxinhas por loja) e cadastro de lojas
 
 ### Novidades
