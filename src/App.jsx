@@ -1827,7 +1827,9 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                           const wKey = addDays(result.partialWeekStart, w * 7).toISOString().slice(0, 10);
                           let weekProd = 0;
                           for (let di = 0; di < 7; di++) weekProd += progEdits[`${r.cod}_${wKey}_${di}`] ?? (r.prog[di] ?? 0);
-                          startEst = Math.round(startEst + weekProd - r.media);
+                          // o estoque informado é o da segunda à noite: a venda da segunda da 1ª semana já saiu dele
+                          const jaVendido = w === 0 ? Math.ceil(r.mixDia[0] * r.media) : 0;
+                          startEst = Math.round(startEst + weekProd - (r.media - jaVendido));
                         }
                         let runEst = startEst;
                         const dayData = progWeekDates.map((d, di)=>{
@@ -1836,8 +1838,10 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                           const wKey = progWKeys[wk];
                           const prod = progEdits[`${r.cod}_${wKey}_${dow}`] ?? (r.prog[dow] ?? 0);
                           const venda = Math.ceil(r.mixDia[dow] * r.media);
-                          runEst = Math.round(runEst + prod - venda);
-                          return { prod, venda, estProj: runEst, wKey, dow };
+                          // Estoque = contagem da segunda à noite: a venda dessa segunda não é descontada de novo
+                          const jaNoEstoque = _weeksDiff === 0 && di === 0;
+                          runEst = Math.round(runEst + prod - (jaNoEstoque ? 0 : venda));
+                          return { prod, venda, estProj: runEst, wKey, dow, jaNoEstoque };
                         });
                         const totalProg = dayData.reduce((s,d)=>s+d.prod,0);
                         const saldo = totalProg - r.liquida * 2;
@@ -1862,7 +1866,8 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                                   background: isWeekend ? "#F5F3EE" : (Math.floor(di/7)===1 ? "#FAFDF8" : "transparent"),
                                   borderLeft: di===7 ? "3px solid #B96A1B" : undefined,
                                   textAlign:"center", minWidth:72}}>
-                                  <div style={{fontSize:10,color:"#9A8E7F",marginBottom:2,fontFamily:"'Inter',sans-serif",fontWeight:500}}>
+                                  <div title={dd.jaNoEstoque ? "O estoque é o da segunda à noite: esta venda já saiu dele e não é descontada" : undefined}
+                                    style={{fontSize:10,color:"#9A8E7F",marginBottom:2,fontFamily:"'Inter',sans-serif",fontWeight:500,textDecoration:dd.jaNoEstoque?"line-through":"none"}}>
                                     vnd {dd.venda||0}
                                   </div>
                                   <input

@@ -1,5 +1,12 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 08/10/2026 — v1.28 — Programação: venda da segunda não desconta do estoque
+
+### Ajuste
+- Na aba Programação, o estoque informado passa a ser tratado como a contagem da **segunda-feira à noite**. Por isso, a venda média da segunda da primeira semana não é mais descontada do estoque projetado (ela já saiu dele). A venda aparece riscada nesse dia para indicar que não entra na conta. Da terça em diante, e na segunda da semana seguinte, o desconto continua normal.
+
+---
+
 ## 02/10/2026 — v1.27 — Ajuste percentual da produção e novos códigos nas programações
 
 ### Novidades
