@@ -1,5 +1,14 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 21/10/2026 — v1.29 — Envio Diário por loja no Excel, setor Doces e Programação só com itens programados
+
+### Ajustes
+- **Envio Diário — setor Doces**: o grupo antes chamado "Bolos do dia" passa a se chamar **Doces** e inclui também os códigos 7009 e 7011 (além de 3791 e 37910), com a mesma regra de produção dos bolos.
+- **Excel do Envio Diário reorganizado**: cada aba (Envio Doces, Envio Salgados, Base Doces, Base Salgados) agora traz uma tabela por loja, uma abaixo da outra, com os produtos nas linhas e os dias da semana nas colunas, total por dia e total da loja. A aba de envio fecha com a tabela da Fábrica (total das lojas). Produtos sem quantidade em uma loja não aparecem na tabela daquela loja.
+- **Programação — Excel e PDF**: só saem os produtos que têm alguma programação nas duas semanas; linhas com todos os dias zerados ou em branco ficam de fora. A tela continua mostrando todos.
+
+---
+
 ## 08/10/2026 — v1.28 — Programação: venda da segunda não desconta do estoque
 
 ### Ajuste

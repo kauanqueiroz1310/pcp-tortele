@@ -22,8 +22,8 @@ const LOJAS_PADRAO = ["ALDEOTA", "MEIRELES", "RIO MAR", "SUL"];
 const DIAS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 // Programação de salgados de loja: produção 3x por semana (Seg, Qua, Sáb) — códigos definidos pelo operacional
 const COD_SALGADOS_PROG = [709, 710, 717, 7007, 7013];
-// Produtos que seguem a programação de bolos mesmo fora das categorias "Bolo…"
-const COD_BOLOS_EXTRA = [3791, 37910];
+// Setor Doces: produtos que seguem a programação de bolos mesmo fora das categorias "Bolo…"
+const COD_BOLOS_EXTRA = [3791, 37910, 7009, 7011];
 
 /* ---------------- helpers ---------------- */
 function parseDateBR(s) {
@@ -694,39 +694,57 @@ function styledSheet(data, cols, title) {
   return ws;
 }
 
-// Excel separado do geral: produção/entrega por loja de bolos do dia e coxinhas (modelo da PROGRAMAÇÃO DIÁRIA)
+// Uma aba com uma tabela por loja (linhas = produtos, colunas = dias), uma abaixo da outra.
+// Produtos sem quantidade na loja ficam fora da tabela daquela loja. Com `fabrica`, fecha com a tabela do total da fábrica.
+function envioBlocosSheet(titulo, dados, lojas, dias, campo, fabrica) {
+  const ws = {}, merges = [], rowsH = [];
+  const nc = 2 + dias.length + 1;
+  let r = 0;
+  const put = (c, v, s) => { ws[XLSX.utils.encode_cell({ r, c })] = typeof v === "number" ? { v, t: "n", s } : { v: v ?? "", t: "s", s }; };
+  const linhaCheia = (txt, s, h) => { put(0, txt, s); for (let c = 1; c < nc; c++) put(c, "", s); merges.push({ s: { r, c: 0 }, e: { r, c: nc - 1 } }); rowsH[r] = { hpt: h }; r++; };
+  const NUM_DIA = { fill:{patternType:"solid",fgColor:{rgb:"EDF1F8"}}, font:{bold:true,color:{rgb:"264478"}}, alignment:{horizontal:"center",vertical:"center"}, numFmt:"#,##0" };
+  const TOT = { font:{bold:true,color:{rgb:"3C2008"}}, fill:{patternType:"solid",fgColor:{rgb:"F0DBBF"}}, alignment:{horizontal:"center",vertical:"center"}, numFmt:"#,##0" };
+  const TOT_TXT = { ...TOT, alignment:{horizontal:"left",vertical:"center"} };
+  const bloco = (nomeBloco, linhas, corTitulo) => {
+    linhaCheia(nomeBloco, { ...XS.hdrOrange, fill:{patternType:"solid",fgColor:{rgb:corTitulo}}, alignment:{horizontal:"left",vertical:"center"} }, 22);
+    ["Cód", "Produto", ...dias.map((d) => DIAS[d]), "Total"].forEach((h, c) => put(c, h, XS.hdr)); r++;
+    const somaDia = dias.map(() => 0);
+    linhas.forEach(([cod, produto, vals], k) => {
+      const alt = k % 2 === 1;
+      put(0, cod, XS.num(alt)); put(1, produto || `cod ${cod}`, alt ? XS.rowA : XS.rowB);
+      dias.forEach((d, c) => { const v = vals[d] || 0; somaDia[c] += v; put(2 + c, v || "", v ? NUM_DIA : (alt ? XS.rowA : XS.rowB)); });
+      put(2 + dias.length, dias.reduce((a, d) => a + (vals[d] || 0), 0), { ...XS.num(alt), font:{bold:true} });
+      r++;
+    });
+    if (!linhas.length) { linhaCheia("Sem envio programado para esta loja.", { ...XS.rowB, font:{italic:true,color:{rgb:"8A8073"}} }, 18); r++; return; }
+    put(0, "", TOT_TXT); put(1, "TOTAL", TOT_TXT);
+    somaDia.forEach((v, c) => put(2 + c, v, TOT)); put(2 + dias.length, somaDia.reduce((a, b) => a + b, 0), TOT);
+    r += 2;
+  };
+  linhaCheia(`tortelê · ${titulo} · ${new Date().toLocaleDateString("pt-BR")}`, LOGO_HDR_STYLE, 28); r++;
+  const temValor = (vals) => dias.some((d) => vals[d]);
+  lojas.forEach((l, li) => bloco(l, dados.map((x) => [x.cod, x.produto, x[campo][li]]).filter(([, , v]) => temValor(v)), li % 2 === 0 ? "3C2008" : "6B4A2A"));
+  if (fabrica) bloco("FÁBRICA (TOTAL DAS LOJAS)", dados.map((x) => [x.cod, x.produto, x.fabrica]).filter(([, , v]) => temValor(v)), "264478");
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(0, r - 1), c: nc - 1 } });
+  ws["!merges"] = merges;
+  ws["!cols"] = [{ wch: 8 }, { wch: 40 }, ...dias.map(() => ({ wch: 9 })), { wch: 10 }];
+  ws["!rows"] = rowsH;
+  return ws;
+}
+
+// Excel separado do geral: produção/entrega por loja do setor Doces (bolos do dia) e dos Salgados (modelo da PROGRAMAÇÃO DIÁRIA)
 function exportEnvioDiario(result) {
   const { lojas } = result;
-  const ab = abrevLojas(lojas);
   const wb = XLSX.utils.book_new();
-  const AZUL = { fill:{patternType:"solid",fgColor:{rgb:"EDF1F8"}}, font:{bold:true,color:{rgb:"264478"}}, alignment:{horizontal:"center",vertical:"center"}, numFmt:"#,##0" };
   const grupos = [
-    ["bolos", "Bolos", result.rows.filter(ehBoloProg)],
+    ["bolos", "Doces", result.rows.filter(ehBoloProg)],
     ["coxinhas", "Salgados", result.rows.filter(ehSalgadoProg)],
   ];
   for (const [tipo, nome, rows] of grupos) {
     const dados = calcEnvioGrupo(rows, lojas, tipo);
-    // Aba de produção por loja: 7 dias por loja (em branco nos dias sem produção), total da loja e total da fábrica
-    const h = ["Cód", "Produto", "Categoria",
-      ...lojas.flatMap((l) => DIAS.map((d) => `${ab[l]} ${d}`)),
-      ...lojas.map((l) => `Total ${ab[l]}`),
-      ...DIAS.map((d) => `Fábrica ${d}`), "TOTAL"];
-    const d = dados.map((x) => [x.cod, x.produto, x.categoria,
-      ...x.envio.flatMap((dias) => dias.map((v) => v ?? "")),
-      ...x.totLoja,
-      ...x.fabrica.map((v) => v ?? ""), x.total]);
-    const ws = styledSheet([h, ...d], [7, 38, 20, ...lojas.flatMap(() => DIAS.map(() => 8)), ...lojas.map(() => 10), ...DIAS.map(() => 11), 9], `Envio diário — ${nome}`);
-    const c0 = 3 + lojas.length * 7 + lojas.length;
-    for (let r = 2; r < d.length + 2; r++) for (let c = c0; c < c0 + 8; c++) {
-      const addr = XLSX.utils.encode_cell({ r, c });
-      if (ws[addr] && typeof ws[addr].v === "number") ws[addr].s = AZUL;
-    }
-    XLSX.utils.book_append_sheet(wb, ws, `Envio ${nome}`);
-    // Aba de conferência: demanda por dia de venda de cada loja, antes da regra
-    const hb = ["Cód", "Produto", "Categoria", ...lojas.flatMap((l) => DIAS.map((dd) => `${ab[l]} ${dd}`)), ...lojas.map((l) => `Total ${ab[l]}`)];
-    const db = dados.map((x) => [x.cod, x.produto, x.categoria, ...x.base.flat(), ...x.base.map((b) => b.reduce((a, v) => a + v, 0))]);
-    const wsb = styledSheet([hb, ...db], [7, 38, 20, ...lojas.flatMap(() => DIAS.map(() => 8)), ...lojas.map(() => 10)], `Demanda por dia de venda — ${nome}`);
-    XLSX.utils.book_append_sheet(wb, wsb, `Base ${nome}`);
+    XLSX.utils.book_append_sheet(wb, envioBlocosSheet(`Envio diário — ${nome}`, dados, lojas, DIAS_PROD[tipo], "envio", true), `Envio ${nome}`);
+    // conferência: demanda por dia de venda de cada loja, antes da regra de produção
+    XLSX.utils.book_append_sheet(wb, envioBlocosSheet(`Demanda por dia de venda — ${nome}`, dados, lojas, [0, 1, 2, 3, 4, 5, 6], "base", false), `Base ${nome}`);
   }
   XLSX.writeFile(wb, `Envio_Diario_Tortele_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
@@ -1681,14 +1699,15 @@ export default function PCPTorteleWeb() {
                         const wk1 = addDays(new Date(progWeekStart+"T12:00:00"), 7).toISOString().slice(0,10);
                         const hdr = ["Cód","Produto","Categoria","Setor","Est. Atual","ES","Líq/sem",
                           ...progWeekDates.map(d=>fmtDM(d)+" "+DIAS[(d.getDay()+6)%7]),"Total 2sem","Saldo"];
+                        // só produtos com alguma programação nas 2 semanas
                         const body = visRows.slice(0,400).map(r=>{
                           const vals = progWeekDates.map((_,di)=>{
                             const wk = Math.floor(di/7); const dow = di%7;
                             return progEdits[`${r.cod}_${wk===0?wk0:wk1}_${dow}`]??(r.prog[dow]??0);
                           });
-                          const tot = vals.reduce((s,v)=>s+v,0);
-                          return [r.cod,r.produto,r.categoria,r.setor??"-",r.estoque,Math.ceil(r.es),r.liquida,...vals,tot,tot-r.liquida*2];
-                        });
+                          const tot = vals.reduce((s,v)=>s+(v||0),0);
+                          return tot>0 ? [r.cod,r.produto,r.categoria,r.setor??"-",r.estoque,Math.ceil(r.es),r.liquida,...vals,tot,tot-r.liquida*2] : null;
+                        }).filter(Boolean);
                         const wb2 = XLSX.utils.book_new();
                         const ws = styledSheet([hdr,...body],
                           [7,36,16,8,9,7,9,...progWeekDates.map(()=>10),10,9],
@@ -1745,7 +1764,8 @@ ${progWeekDates.map((d,i)=>`<th class="${i<7?'s1':'s2'}">${fmtDM(d)}<br/>${DIAS[
                             const wk=Math.floor(di/7),dow=di%7;
                             return progEdits[`${r.cod}_${wk===0?wk0:wk1}_${dow}`]??(r.prog[dow]??0);
                           });
-                          const tot=vals.reduce((s,v)=>s+v,0);
+                          const tot=vals.reduce((s,v)=>s+(v||0),0);
+                          if (!(tot>0)) continue; // só produtos com alguma programação
                           const saldo=tot-r.liquida*2;
                           html+=`<tr><td style="color:#8A8073">${r.cod}</td><td class="nome">${r.produto||'-'}</td>
 <td style="text-align:left;font-size:7.5px;color:#7A6450">${r.categoria||'-'}</td>
@@ -1987,7 +2007,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
               <div style={{...S.panel, padding:0, overflow:"auto", maxHeight:"64vh"}}>
                 <div style={{padding:"10px 16px", borderBottom:"1px solid #F0EBE2", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap"}}>
                   <div style={{display:"flex",gap:6}}>
-                    {[["bolos","Bolos do dia"],["coxinhas","Salgados"]].map(([k,l])=>(
+                    {[["bolos","Doces"],["coxinhas","Salgados"]].map(([k,l])=>(
                       <button key={k} onClick={()=>setEnvioGrupo(k)}
                         style={{...S.btnGhost, fontSize:12, padding:"6px 12px", background:envioGrupo===k?BRAND.amber:"transparent", color:envioGrupo===k?"#fff":BRAND.amber}}>
                         {l} ({envioDiario[k].length})
@@ -2006,7 +2026,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     {envioBase
                       ? <>Quanto cada loja deve vender em cada dia (Sugerida repartida pelo % da loja e pelo peso do dia). É a base antes da regra de produção.</>
                       : envioGrupo==="bolos"
-                        ? <>Seg a Qui: metade do dia + metade do dia seguinte · Sex: metade da Sex + Sáb + metade do Dom · Sáb: metade do Dom + metade da Seg · Dom não produz.</>
+                        ? <>Bolos do dia e códigos {COD_BOLOS_EXTRA.join(", ")} · Seg a Qui: metade do dia + metade do dia seguinte · Sex: metade da Sex + Sáb + metade do Dom · Sáb: metade do Dom + metade da Seg · Dom não produz.</>
                         : <>Produção 3x por semana — Seg: ½ Seg + Ter + ½ Qua · Qua: ½ Qua + Qui + Sex + ½ Sáb · Sáb: ½ Sáb + Dom + ½ Seg. Só códigos {COD_SALGADOS_PROG.join(", ")}.</>}
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>exportEnvioDiario(result)}>⬇ Excel (Envio Diário)</button>
