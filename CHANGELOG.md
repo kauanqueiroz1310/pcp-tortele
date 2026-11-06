@@ -1,5 +1,16 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 06/11/2026 — v1.30 — Nova regra de produção do setor Doces
+
+### Ajuste
+- **Envio Diário — setor Doces**: a regra de produção passa a seguir o *Descritivo de abastecimento de lojas — rev 09.2026*. Cada dia de produção fabrica a **média de venda dos dois dias seguintes**: Seg = média de Ter e Qua; Ter = Qua e Qui; Qua = Qui e Sex; Qui = Sex e Sáb; Sex = Sáb e Dom; Sáb = Dom e Seg. Domingo não produz.
+- Antes, cada dia produzia metade do próprio dia + metade do dia seguinte.
+
+### Ponto de atenção
+- Como domingo não produz e o sábado cobre só domingo e segunda, metade da venda de segunda e metade da de terça ficam sem produção na conta da semana. Com venda constante de 10 por dia, a semana produz 60 para 70 vendidos. Em validação com o operacional.
+
+---
+
 ## 21/10/2026 — v1.29 — Envio Diário por loja no Excel, setor Doces e Programação só com itens programados
 
 ### Ajustes

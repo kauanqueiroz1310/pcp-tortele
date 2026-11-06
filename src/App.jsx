@@ -81,12 +81,12 @@ const isBoloDoDia = (cat) => String(cat || "").trim().toLowerCase().startsWith("
 const ehBoloProg = (r) => COD_BOLOS_EXTRA.includes(r.cod) || (isBoloDoDia(r.categoria) && !COD_SALGADOS_PROG.includes(r.cod));
 const ehSalgadoProg = (r) => COD_SALGADOS_PROG.includes(r.cod);
 
-// Regra dos bolos (aba PCP - BOLO DO DIA): recebe 7 valores por dia de venda (Seg..Dom) e devolve a produção por dia
+// Regra do setor Doces (descritivo de abastecimento rev 09.2026): cada dia de produção fabrica a média de venda
+// dos dois dias seguintes. Domingo não produz; o sábado cobre domingo e segunda.
+// Recebe 7 valores por dia de venda (Seg..Dom) e devolve a produção por dia.
 function regraBolos(d) {
-  return [
-    Math.ceil((d[0] + d[1]) / 2), Math.ceil((d[1] + d[2]) / 2), Math.ceil((d[2] + d[3]) / 2), Math.ceil((d[3] + d[4]) / 2),
-    Math.ceil(d[4] / 2 + d[5] + d[6] / 2), Math.ceil((d[6] + d[0]) / 2), 0,
-  ];
+  const media2 = (a, b) => Math.ceil((d[a] + d[b]) / 2);
+  return [media2(1, 2), media2(2, 3), media2(3, 4), media2(4, 5), media2(5, 6), media2(6, 0), 0];
 }
 // Regra das coxinhas (aba PCP - COXINHAS): produção só Seg, Qua e Sáb
 function regraCoxinhas(d) {
@@ -2026,7 +2026,7 @@ ${vals.map((v,i)=>`<td class="${i<7?'s1':'s2'}${v===0?' zero':''}">${v||''}</td>
                     {envioBase
                       ? <>Quanto cada loja deve vender em cada dia (Sugerida repartida pelo % da loja e pelo peso do dia). É a base antes da regra de produção.</>
                       : envioGrupo==="bolos"
-                        ? <>Bolos do dia e códigos {COD_BOLOS_EXTRA.join(", ")} · Seg a Qui: metade do dia + metade do dia seguinte · Sex: metade da Sex + Sáb + metade do Dom · Sáb: metade do Dom + metade da Seg · Dom não produz.</>
+                        ? <>Bolos do dia e códigos {COD_BOLOS_EXTRA.join(", ")} · cada dia produz a média de venda dos 2 dias seguintes — Seg: Ter e Qua · Ter: Qua e Qui · Qua: Qui e Sex · Qui: Sex e Sáb · Sex: Sáb e Dom · Sáb: Dom e Seg · Dom não produz.</>
                         : <>Produção 3x por semana — Seg: ½ Seg + Ter + ½ Qua · Qua: ½ Qua + Qui + Sex + ½ Sáb · Sáb: ½ Sáb + Dom + ½ Seg. Só códigos {COD_SALGADOS_PROG.join(", ")}.</>}
                   </div>
                   <button style={{...S.btn, fontSize:11, padding:"6px 12px"}} onClick={()=>exportEnvioDiario(result)}>⬇ Excel (Envio Diário)</button>
