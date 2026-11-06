@@ -1,5 +1,13 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 06/11/2026 — v1.31 — Setor Doces: soma das médias (correção da v1.30)
+
+### Ajuste
+- **Envio Diário — setor Doces**: a Eduarda corrigiu a regra da v1.30. Cada dia de produção fabrica a **soma das médias de venda dos dois dias seguintes** (e não a média entre eles): Seg = Ter + Qua; Ter = Qua + Qui; Qua = Qui + Sex; Qui = Sex + Sáb; Sex = Sáb + Dom; Sáb = Dom + Seg. Domingo não produz.
+- O ponto de atenção da v1.30 (semana produzindo menos que a venda) deixa de valer.
+
+---
+
 ## 06/11/2026 — v1.30 — Nova regra de produção do setor Doces
 
 ### Ajuste
