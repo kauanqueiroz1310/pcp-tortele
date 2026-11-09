@@ -1,5 +1,12 @@
 # Histórico de versões — PCP Tortelê Web
 
+## 09/11/2026 — v1.32 — Setor Doces: produção do dia + dia seguinte
+
+### Ajuste
+- **Envio Diário — setor Doces**: nova metodologia definida pelo Diogo (repassada pela Eduarda). Cada dia de produção fabrica a **soma das médias de venda do próprio dia e do dia seguinte**: Seg = Seg + Ter; Ter = Ter + Qua; Qua = Qua + Qui; Qui = Qui + Sex; Sex = Sex + Sáb; Sáb = Sáb + Dom. Domingo não produz. Substitui a regra dos "dois dias seguintes" da v1.31.
+
+---
+
 ## 06/11/2026 — v1.31 — Setor Doces: soma das médias (correção da v1.30)
 
 ### Ajuste
